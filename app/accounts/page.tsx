@@ -23,6 +23,7 @@ import {
   Trash2,
   Search,
   ArrowUpDown,
+  Pencil,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -54,7 +55,7 @@ import AuthService from "@/services/authService"
 
 // Interface para as contas bancárias
 interface BankAccount {
-  id: string
+  id: number
   name: string
   cpf: string
   dateOfBirth: string
@@ -119,21 +120,22 @@ export default function AccountsPage() {
     balance: "",
   })
   const [bankMovement, setBankMovement] = useState<{
-    accountId: string
+    accountId: number | null
     amount: string
     movementDate: string
   }>({
-    accountId: "",
+    accountId: null,
     amount: "",
     movementDate: new Date().toISOString().slice(0, 10),
   })
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [movementErrors, setMovementErrors] = useState<Record<string, string>>({})
   const [isDeleteAccountDialogOpen, setIsDeleteAccountDialogOpen] = useState(false)
-  const [accountToDelete, setAccountToDelete] = useState<string | null>(null)
+  const [accountToDelete, setAccountToDelete] = useState<number | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
 
   // Estados para a seção de movimentos
-  const [selectedAccountId, setSelectedAccountId] = useState<string>("")
+  const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null)
   const [movementType, setMovementType] = useState<string>("all")
   const [searchTerm, setSearchTerm] = useState<string>("")
   const [filteredTransactions, setFilteredTransactions] = useState<Transaction[]>([])
@@ -163,6 +165,10 @@ export default function AccountsPage() {
     },
   ])
 
+  // Adicionar estado para edição
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+  const [accountToEdit, setAccountToEdit] = useState<BankAccount | null>(null)
+
   // Adicionar função para calcular o saldo de transações por conta
   const getAccountTransactionBalance = (accountId: string) => {
     return mockTransactions
@@ -181,6 +187,32 @@ export default function AccountsPage() {
     return mockTransactions.filter((t) => t.accountId === accountId).length
   }
 
+  // Função para buscar as contas do backend
+  const fetchAccounts = async () => {
+    try {
+      const response = await AuthService.authenticatedRequest('/account', {
+        method: 'GET'
+      });
+
+      if (!response.ok) {
+        throw new Error('Erro ao buscar contas bancárias');
+      }
+
+      const data = await response.json();
+      console.log('Contas recebidas:', data);
+      setAccounts(data);
+      setIsLoading(false);
+    } catch (error) {
+      console.error('Erro ao buscar contas:', error);
+      toast({
+        title: "Erro",
+        description: "Não foi possível carregar suas contas bancárias.",
+        variant: "destructive",
+      });
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
     // Verificar se o usuário está logado
     const isLoggedIn = localStorage.getItem("isLoggedIn") === "true"
@@ -188,20 +220,12 @@ export default function AccountsPage() {
     // Se não estiver logado, redirecionar para a página de login
     if (!isLoggedIn) {
       router.push("/login")
+      return;
     }
 
-    // Carregar contas do localStorage
-    const storedAccounts = localStorage.getItem("bankAccounts")
-    if (storedAccounts) {
-      setAccounts(JSON.parse(storedAccounts))
-    }
-
-    // Carregar transações do localStorage
-    const storedTransactions = localStorage.getItem("transactions")
-    if (storedTransactions) {
-      setTransactions(JSON.parse(storedTransactions))
-    }
-  }, [router])
+    // Buscar as contas do backend
+    fetchAccounts();
+  }, [router]);
 
   // Filtrar transações quando os filtros ou a conta selecionada mudar
   useEffect(() => {
@@ -210,7 +234,7 @@ export default function AccountsPage() {
       return
     }
 
-    let filtered = transactions.filter((t) => t.accountId === selectedAccountId)
+    let filtered = transactions.filter((t) => Number(t.accountId) === selectedAccountId)
 
     // Filtrar por tipo (depósito/saque)
     if (movementType === "deposit") {
@@ -274,7 +298,7 @@ export default function AccountsPage() {
   const validateMovementForm = () => {
     const newErrors: Record<string, string> = {}
 
-    if (!bankMovement.accountId) {
+    if (bankMovement.accountId === null) {
       newErrors.accountId = "Selecione uma conta"
     }
 
@@ -374,7 +398,7 @@ export default function AccountsPage() {
 
   // Função para processar depósito
   const handleDeposit = () => {
-    if (!validateMovementForm()) return
+    if (!validateMovementForm() || bankMovement.accountId === null) return
 
     // Encontrar a conta selecionada
     const accountIndex = accounts.findIndex((account) => account.id === bankMovement.accountId)
@@ -397,7 +421,7 @@ export default function AccountsPage() {
       type: "income",
       category: "other_income",
       date: bankMovement.movementDate,
-      accountId: bankMovement.accountId,
+      accountId: bankMovement.accountId.toString(),
     }
 
     // Atualizar o estado
@@ -412,7 +436,7 @@ export default function AccountsPage() {
     // Fechar o diálogo e resetar o formulário
     setIsDepositDialogOpen(false)
     setBankMovement({
-      accountId: "",
+      accountId: null,
       amount: "",
       movementDate: new Date().toISOString().slice(0, 10),
     })
@@ -421,7 +445,7 @@ export default function AccountsPage() {
 
   // Função para processar saque
   const handleWithdraw = () => {
-    if (!validateMovementForm()) return
+    if (!validateMovementForm() || bankMovement.accountId === null) return
 
     // Encontrar a conta selecionada
     const accountIndex = accounts.findIndex((account) => account.id === bankMovement.accountId)
@@ -453,7 +477,7 @@ export default function AccountsPage() {
       type: "expense",
       category: "other_expense",
       date: bankMovement.movementDate,
-      accountId: bankMovement.accountId,
+      accountId: bankMovement.accountId.toString(),
     }
 
     // Atualizar o estado
@@ -468,7 +492,7 @@ export default function AccountsPage() {
     // Fechar o diálogo e resetar o formulário
     setIsWithdrawDialogOpen(false)
     setBankMovement({
-      accountId: "",
+      accountId: null,
       amount: "",
       movementDate: new Date().toISOString().slice(0, 10),
     })
@@ -476,32 +500,64 @@ export default function AccountsPage() {
   }
 
   // Função para excluir uma conta
-  const handleDeleteAccount = () => {
-    if (!accountToDelete) return
+  const handleDeleteAccount = async () => {
+    if (!accountToDelete) return;
 
-    // Filtrar a conta a ser excluída
-    const updatedAccounts = accounts.filter((account) => account.id !== accountToDelete)
+    try {
+      // Verificar se está autenticado
+      if (!AuthService.isAuthenticated()) {
+        toast({
+          title: "Erro",
+          description: "Você precisa estar logado para excluir uma conta.",
+          variant: "destructive",
+        });
+        router.push("/login");
+        return;
+      }
 
-    // Filtrar as transações associadas à conta
-    const updatedTransactions = transactions.filter((transaction) => transaction.accountId !== accountToDelete)
+      // Fazer a requisição DELETE
+      const deleteResponse = await AuthService.authenticatedRequest(`/account/${accountToDelete}`, {
+        method: 'DELETE'
+      });
 
-    // Atualizar o estado
-    setAccounts(updatedAccounts)
-    setTransactions(updatedTransactions)
+      if (!deleteResponse.ok) {
+        throw new Error('Erro ao excluir conta bancária');
+      }
 
-    // Salvar no localStorage
-    localStorage.setItem("bankAccounts", JSON.stringify(updatedAccounts))
-    localStorage.setItem("transactions", JSON.stringify(updatedTransactions))
+      // Atualizar o estado local removendo a conta excluída
+      const updatedAccounts = accounts.filter((account) => account.id !== accountToDelete);
+      setAccounts(updatedAccounts);
 
-    // Fechar o diálogo e limpar a conta selecionada
-    setIsDeleteAccountDialogOpen(false)
-    setAccountToDelete(null)
+      // Fechar o diálogo e limpar a conta selecionada
+      setIsDeleteAccountDialogOpen(false);
+      setAccountToDelete(null);
 
-    // Se a conta excluída for a selecionada na seção de movimentos, limpar a seleção
-    if (accountToDelete === selectedAccountId) {
-      setSelectedAccountId("")
+      // Se a conta excluída for a selecionada na seção de movimentos, limpar a seleção
+      if (accountToDelete === selectedAccountId) {
+        setSelectedAccountId(null);
+      }
+
+      // Mostrar mensagem de sucesso
+      toast({
+        title: "Sucesso",
+        description: "Conta bancária excluída com sucesso!",
+        variant: "default",
+      });
+
+    } catch (error) {
+      console.error('Erro ao excluir conta:', error);
+      toast({
+        title: "Erro",
+        description: error instanceof Error ? error.message : "Não foi possível excluir a conta bancária.",
+        variant: "destructive",
+      });
+
+      // Se for erro de autenticação, redirecionar para o login
+      if (error instanceof Error && error.message.includes('Token não encontrado')) {
+        router.push("/login");
+      }
     }
-  }
+  };
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("pt-BR", {
@@ -543,9 +599,77 @@ export default function AccountsPage() {
   }
 
   const getAccountName = (accountId: string) => {
-    const account = accounts.find((acc) => acc.id === accountId)
+    const account = accounts.find((acc) => acc.id.toString() === accountId)
     return account ? account.name : "Conta desconhecida"
   }
+
+  const handleEditAccount = async () => {
+    if (!accountToEdit) return;
+
+    try {
+      // Verificar se está autenticado
+      if (!AuthService.isAuthenticated()) {
+        toast({
+          title: "Erro",
+          description: "Você precisa estar logado para editar uma conta.",
+          variant: "destructive",
+        });
+        router.push("/login");
+        return;
+      }
+
+      // Criar o objeto com os dados atualizados
+      const updateData = {
+        name: accountToEdit.name,
+        cpf: accountToEdit.cpf.replace(/[.-]/g, ''), // Remove pontos e traço do CPF
+        dateOfBirth: accountToEdit.dateOfBirth,
+        bank: accountToEdit.bank,
+        balance: accountToEdit.balance
+      };
+
+      // Fazer a requisição PUT
+      const updateResponse = await AuthService.authenticatedRequest(`/account/${accountToEdit.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(updateData)
+      });
+
+      if (!updateResponse.ok) {
+        throw new Error('Erro ao atualizar conta bancária');
+      }
+
+      const updatedAccount = await updateResponse.json();
+
+      // Atualizar o estado local
+      const updatedAccounts = accounts.map(account => 
+        account.id === accountToEdit.id ? updatedAccount : account
+      );
+      setAccounts(updatedAccounts);
+
+      // Fechar o diálogo e limpar a conta selecionada
+      setIsEditDialogOpen(false);
+      setAccountToEdit(null);
+
+      // Mostrar mensagem de sucesso
+      toast({
+        title: "Sucesso",
+        description: "Conta bancária atualizada com sucesso!",
+        variant: "default",
+      });
+
+    } catch (error) {
+      console.error('Erro ao atualizar conta:', error);
+      toast({
+        title: "Erro",
+        description: error instanceof Error ? error.message : "Não foi possível atualizar a conta bancária.",
+        variant: "destructive",
+      });
+
+      // Se for erro de autenticação, redirecionar para o login
+      if (error instanceof Error && error.message.includes('Token não encontrado')) {
+        router.push("/login");
+      }
+    }
+  };
 
   return (
     <div className="flex min-h-screen flex-col cement-gradient">
@@ -744,15 +868,15 @@ export default function AccountsPage() {
                           Conta
                         </Label>
                         <Select
-                          value={bankMovement.accountId}
-                          onValueChange={(value) => setBankMovement({ ...bankMovement, accountId: value })}
+                          value={bankMovement.accountId?.toString() || ""}
+                          onValueChange={(value) => setBankMovement({ ...bankMovement, accountId: Number(value) })}
                         >
                           <SelectTrigger className="bg-zinc-800 border-zinc-700 text-zinc-200">
                             <SelectValue placeholder="Selecione a conta" />
                           </SelectTrigger>
                           <SelectContent className="bg-zinc-800 border-zinc-700">
                             {accounts.map((account) => (
-                              <SelectItem key={account.id} value={account.id} className="text-zinc-200">
+                              <SelectItem key={account.id} value={account.id.toString()} className="text-zinc-200">
                                 {account.name} - {getBankLabel(account.bank)}
                               </SelectItem>
                             ))}
@@ -835,15 +959,15 @@ export default function AccountsPage() {
                           Conta
                         </Label>
                         <Select
-                          value={bankMovement.accountId}
-                          onValueChange={(value) => setBankMovement({ ...bankMovement, accountId: value })}
+                          value={bankMovement.accountId?.toString() || ""}
+                          onValueChange={(value) => setBankMovement({ ...bankMovement, accountId: Number(value) })}
                         >
                           <SelectTrigger className="bg-zinc-800 border-zinc-700 text-zinc-200">
                             <SelectValue placeholder="Selecione a conta" />
                           </SelectTrigger>
                           <SelectContent className="bg-zinc-800 border-zinc-700">
                             {accounts.map((account) => (
-                              <SelectItem key={account.id} value={account.id} className="text-zinc-200">
+                              <SelectItem key={account.id} value={account.id.toString()} className="text-zinc-200">
                                 {account.name} - {getBankLabel(account.bank)} ({formatCurrency(account.balance)})
                               </SelectItem>
                             ))}
@@ -910,22 +1034,34 @@ export default function AccountsPage() {
                 <CardTitle className="text-zinc-100">Resumo das Contas</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="flex flex-col gap-2 p-4 rounded-lg bg-zinc-800/50 border border-zinc-700">
-                    <div className="text-sm text-zinc-400">Total em Contas</div>
-                    <div className="text-2xl font-bold text-zinc-100">{formatCurrency(getTotalBalance())}</div>
+                {isLoading ? (
+                  <div className="flex justify-center items-center p-4">
+                    <div className="text-zinc-400">Carregando contas...</div>
                   </div>
-                  <div className="flex flex-col gap-2 p-4 rounded-lg bg-zinc-800/50 border border-zinc-700">
-                    <div className="text-sm text-zinc-400">Número de Contas</div>
-                    <div className="text-2xl font-bold text-zinc-100">{accounts.length}</div>
+                ) : (
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="flex flex-col gap-2 p-4 rounded-lg bg-zinc-800/50 border border-zinc-700">
+                      <div className="text-sm text-zinc-400">Total em Contas</div>
+                      <div className="text-2xl font-bold text-zinc-100">{formatCurrency(getTotalBalance())}</div>
+                    </div>
+                    <div className="flex flex-col gap-2 p-4 rounded-lg bg-zinc-800/50 border border-zinc-700">
+                      <div className="text-sm text-zinc-400">Número de Contas</div>
+                      <div className="text-2xl font-bold text-zinc-100">{accounts.length}</div>
+                    </div>
                   </div>
-                </div>
+                )}
               </CardContent>
             </Card>
 
             {/* Lista de Contas */}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {accounts.length === 0 ? (
+              {isLoading ? (
+                <Card className="cement-card border-zinc-700 shadow-lg md:col-span-2 lg:col-span-3">
+                  <CardContent className="flex flex-col items-center justify-center p-6">
+                    <div className="text-zinc-400">Carregando suas contas bancárias...</div>
+                  </CardContent>
+                </Card>
+              ) : accounts.length === 0 ? (
                 <Card className="cement-card border-zinc-700 shadow-lg md:col-span-2 lg:col-span-3">
                   <CardContent className="flex flex-col items-center justify-center p-6">
                     <div className="rounded-full bg-zinc-800 p-4 mb-4">
@@ -981,7 +1117,7 @@ export default function AccountsPage() {
                           </div>
                           <div className="flex items-center gap-2">
                             <DollarSign className="h-4 w-4 text-zinc-400" />
-                            <span className="text-zinc-300">{getAccountTransactionCount(account.id)} transações</span>
+                            <span className="text-zinc-300">{getAccountTransactionCount(account.id.toString())} transações</span>
                           </div>
                         </div>
                         <div className="pt-2 flex justify-between">
@@ -1019,10 +1155,13 @@ export default function AccountsPage() {
                             variant="outline"
                             size="sm"
                             className="border-zinc-700 text-zinc-300 hover:text-white hover:bg-zinc-700"
-                            onClick={() => setSelectedAccountId(account.id)}
+                            onClick={() => {
+                              setAccountToEdit(account)
+                              setIsEditDialogOpen(true)
+                            }}
                           >
-                            <DollarSign className="mr-1 h-3 w-3" />
-                            Movimentos
+                            <Pencil className="mr-1 h-3 w-3" />
+                            Editar
                           </Button>
                         </div>
                       </div>
@@ -1044,13 +1183,16 @@ export default function AccountsPage() {
                       <Label htmlFor="account-filter" className="text-zinc-300">
                         Conta
                       </Label>
-                      <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
+                      <Select
+                        value={selectedAccountId?.toString()}
+                        onValueChange={(value) => setSelectedAccountId(Number(value))}
+                      >
                         <SelectTrigger className="bg-zinc-800 border-zinc-700 text-zinc-200">
                           <SelectValue placeholder="Selecione uma conta" />
                         </SelectTrigger>
                         <SelectContent className="bg-zinc-800 border-zinc-700">
                           {accounts.map((account) => (
-                            <SelectItem key={account.id} value={account.id} className="text-zinc-200">
+                            <SelectItem key={account.id} value={account.id.toString()} className="text-zinc-200">
                               {account.name} - {getBankLabel(account.bank)}
                             </SelectItem>
                           ))}
@@ -1196,6 +1338,107 @@ export default function AccountsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {/* Diálogo de Edição de Conta */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent className="cement-card border-zinc-700">
+          <DialogHeader>
+            <DialogTitle className="text-zinc-100">Editar Conta Bancária</DialogTitle>
+            <DialogDescription className="text-zinc-400">
+              Atualize os detalhes da sua conta bancária abaixo.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-account-name" className="text-zinc-300">
+                Nome Completo
+              </Label>
+              <Input
+                id="edit-account-name"
+                value={accountToEdit?.name || ""}
+                onChange={(e) => setAccountToEdit(accountToEdit ? { ...accountToEdit, name: e.target.value } : null)}
+                placeholder="Ex: João da Silva"
+                className="bg-zinc-800 border-zinc-700 text-zinc-200 placeholder:text-zinc-500"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-account-cpf" className="text-zinc-300">
+                CPF
+              </Label>
+              <Input
+                id="edit-account-cpf"
+                value={accountToEdit?.cpf || ""}
+                onChange={(e) => {
+                  const formattedCPF = formatCPF(e.target.value)
+                  setAccountToEdit(accountToEdit ? { ...accountToEdit, cpf: formattedCPF } : null)
+                }}
+                placeholder="000.000.000-00"
+                className="bg-zinc-800 border-zinc-700 text-zinc-200 placeholder:text-zinc-500"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-account-date" className="text-zinc-300">
+                Data de Nascimento
+              </Label>
+              <Input
+                id="edit-account-date"
+                type="date"
+                value={accountToEdit?.dateOfBirth || ""}
+                onChange={(e) => setAccountToEdit(accountToEdit ? { ...accountToEdit, dateOfBirth: e.target.value } : null)}
+                className="bg-zinc-800 border-zinc-700 text-zinc-200"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-account-bank" className="text-zinc-300">
+                Banco
+              </Label>
+              <Select
+                value={accountToEdit?.bank || ""}
+                onValueChange={(value) => setAccountToEdit(accountToEdit ? { ...accountToEdit, bank: value } : null)}
+              >
+                <SelectTrigger className="bg-zinc-800 border-zinc-700 text-zinc-200">
+                  <SelectValue placeholder="Selecione o banco" />
+                </SelectTrigger>
+                <SelectContent className="bg-zinc-800 border-zinc-700">
+                  {bankOptions.map((bank) => (
+                    <SelectItem key={bank.value} value={bank.value} className="text-zinc-200">
+                      {bank.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-account-balance" className="text-zinc-300">
+                Saldo (R$)
+              </Label>
+              <Input
+                id="edit-account-balance"
+                type="number"
+                step="0.01"
+                value={accountToEdit?.balance || ""}
+                onChange={(e) => setAccountToEdit(accountToEdit ? { ...accountToEdit, balance: Number(e.target.value) } : null)}
+                placeholder="0,00"
+                className="bg-zinc-800 border-zinc-700 text-zinc-200 placeholder:text-zinc-500"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsEditDialogOpen(false)
+                setAccountToEdit(null)
+              }}
+              className="border-zinc-700 text-zinc-300 hover:text-white hover:bg-zinc-700"
+            >
+              Cancelar
+            </Button>
+            <Button onClick={handleEditAccount} className="cement-button text-white border-0">
+              Salvar Alterações
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
