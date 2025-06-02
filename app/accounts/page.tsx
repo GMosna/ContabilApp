@@ -49,6 +49,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { toast } from "@/components/ui/use-toast"
+import AuthService from "@/services/authService"
 
 // Interface para as contas bancárias
 interface BankAccount {
@@ -60,7 +62,22 @@ interface BankAccount {
   balance: number
 }
 
-// Modificar a interface Transaction para incluir accountId
+// Tipos para as transações
+type TransactionType = "income" | "expense"
+type TransactionCategory =
+  | "salary"
+  | "investment"
+  | "other_income"
+  | "food"
+  | "transport"
+  | "housing"
+  | "utilities"
+  | "entertainment"
+  | "health"
+  | "education"
+  | "other_expense"
+
+// Interface para transações
 interface Transaction {
   id: string
   description: string
@@ -68,30 +85,7 @@ interface Transaction {
   type: TransactionType
   category: TransactionCategory
   date: string
-  accountId?: string
-}
-
-// Define TransactionType and TransactionCategory enums
-enum TransactionType {
-  INCOME = "income",
-  EXPENSE = "expense",
-}
-
-enum TransactionCategory {
-  FOOD = "food",
-  TRANSPORT = "transport",
-  HOUSING = "housing",
-  ENTERTAINMENT = "entertainment",
-  OTHER = "other",
-}
-
-// Interface para movimentos bancários (saque/depósito)
-interface BankMovement {
-  id: string
   accountId: string
-  type: "deposit" | "withdraw"
-  amount: number
-  movementDate: string
 }
 
 // Lista de bancos brasileiros
@@ -153,8 +147,8 @@ export default function AccountsPage() {
       id: "1",
       description: "Aluguel",
       amount: 1200,
-      type: TransactionType.EXPENSE,
-      category: TransactionCategory.HOUSING,
+      type: "expense",
+      category: "housing",
       date: "2024-01-15",
       accountId: "123",
     },
@@ -162,8 +156,8 @@ export default function AccountsPage() {
       id: "2",
       description: "Salário",
       amount: 5000,
-      type: TransactionType.INCOME,
-      category: TransactionCategory.OTHER,
+      type: "income",
+      category: "other_income",
       date: "2024-01-30",
       accountId: "123",
     },
@@ -298,36 +292,85 @@ export default function AccountsPage() {
     return Object.keys(newErrors).length === 0
   }
 
-  const handleAddAccount = () => {
-    if (!validateForm()) return
+  const handleAddAccount = async () => {
+    if (!validateForm()) return;
 
-    const account: BankAccount = {
-      id: Date.now().toString(),
-      name: newAccount.name,
-      cpf: newAccount.cpf,
-      dateOfBirth: newAccount.dateOfBirth,
-      bank: newAccount.bank,
-      balance: Number(newAccount.balance),
+    try {
+      // Verificar se está autenticado
+      if (!AuthService.isAuthenticated()) {
+        toast({
+          title: "Erro",
+          description: "Você precisa estar logado para adicionar uma conta.",
+          variant: "destructive",
+        });
+        router.push("/login");
+        return;
+      }
+
+      // Criar o objeto da nova conta
+      const newAccountData = {
+        name: newAccount.name,
+        cpf: newAccount.cpf.replace(/[.-]/g, ''), // Remove pontos e traço do CPF
+        dateOfBirth: newAccount.dateOfBirth,
+        bank: newAccount.bank,
+        balance: newAccount.balance ? Number(newAccount.balance) : 0.00
+      };
+
+      // Fazer a requisição autenticada
+      const createResponse = await AuthService.authenticatedRequest('/account', {
+        method: 'POST',
+        body: JSON.stringify(newAccountData)
+      });
+
+      if (!createResponse.ok) {
+        if (createResponse.status === 403) {
+          throw new Error('Acesso negado. Verifique suas permissões.');
+        }
+        throw new Error('Erro ao adicionar conta bancária');
+      }
+
+      const createdAccount = await createResponse.json();
+
+      // Atualizar a lista de contas
+      const updatedAccounts = [...accounts, createdAccount];
+      setAccounts(updatedAccounts);
+
+      // Salvar no localStorage
+      localStorage.setItem("bankAccounts", JSON.stringify(updatedAccounts));
+
+      // Fechar o diálogo e resetar o formulário
+      setIsAddDialogOpen(false);
+      setNewAccount({
+        name: "",
+        cpf: "",
+        dateOfBirth: "",
+        bank: "",
+        balance: "",
+      });
+      setErrors({});
+
+      // Mostrar mensagem de sucesso
+      toast({
+        title: "Sucesso",
+        description: "Conta bancária adicionada com sucesso!",
+        variant: "default",
+      });
+
+    } catch (error) {
+      console.error('Erro:', error);
+      // Mostrar mensagem de erro específica
+      toast({
+        title: "Erro",
+        description: error instanceof Error ? error.message : "Não foi possível adicionar a conta bancária. Tente novamente.",
+        variant: "destructive",
+      });
+
+      // Se for erro de autenticação, redirecionar para o login
+      if (error instanceof Error && error.message.includes('Token não encontrado')) {
+        router.push("/login");
+      }
     }
-
-    const updatedAccounts = [...accounts, account]
-    setAccounts(updatedAccounts)
-
-    // Salvar no localStorage
-    localStorage.setItem("bankAccounts", JSON.stringify(updatedAccounts))
-
-    setIsAddDialogOpen(false)
-
-    // Resetar o formulário
-    setNewAccount({
-      name: "",
-      cpf: "",
-      dateOfBirth: "",
-      bank: "",
-      balance: "",
-    })
-    setErrors({})
-  }
+  };
 
   // Função para processar depósito
   const handleDeposit = () => {
