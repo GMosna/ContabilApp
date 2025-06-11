@@ -17,6 +17,8 @@ import Image from "next/image"
 import { CreditCard, DollarSign, Home, LogOut, Plus, Wallet } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import AuthService from "@/services/authService"
+import { toast } from "@/components/ui/use-toast"
 
 /**
  * Tipos e interfaces para os dados da aplicação
@@ -44,6 +46,7 @@ interface Transaction {
   type: TransactionType
   category: TransactionCategory
   date: string
+  accountId: string
 }
 
 // Interface para contas bancárias
@@ -70,7 +73,7 @@ export default function DashboardPage() {
   const [balance, setBalance] = useState(0)
 
   /**
-   * Efeito para carregar dados do localStorage
+   * Efeito para carregar dados do backend
    * Verifica se o usuário está logado e carrega transações e contas
    */
   useEffect(() => {
@@ -80,24 +83,57 @@ export default function DashboardPage() {
     // Se não estiver logado, redirecionar para a página de login
     if (!isLoggedIn) {
       router.push("/login")
+      return;
     }
 
-    // Carregar transações do localStorage
-    const storedTransactions = localStorage.getItem("transactions")
-    if (storedTransactions) {
-      const parsedTransactions = JSON.parse(storedTransactions)
-      setTransactions(parsedTransactions)
-    } else {
-      // Se não houver transações no localStorage, usar um array vazio
-      setTransactions([])
-      localStorage.setItem("transactions", JSON.stringify([]))
-    }
+    // Buscar contas do backend
+    const fetchAccounts = async () => {
+      try {
+        const response = await AuthService.authenticatedRequest('/account', {
+          method: 'GET'
+        });
 
-    // Carregar contas bancárias do localStorage
-    const storedAccounts = localStorage.getItem("bankAccounts")
-    if (storedAccounts) {
-      setAccounts(JSON.parse(storedAccounts))
-    }
+        if (!response.ok) {
+          throw new Error('Erro ao buscar contas bancárias');
+        }
+
+        const data = await response.json();
+        setAccounts(data);
+      } catch (error) {
+        console.error('Erro ao buscar contas:', error);
+        toast({
+          title: "Erro",
+          description: "Não foi possível carregar suas contas bancárias.",
+          variant: "destructive",
+        });
+      }
+    };
+
+    // Buscar transações do backend
+    const fetchTransactions = async () => {
+      try {
+        const response = await AuthService.authenticatedRequest('/transactions', {
+          method: 'GET'
+        });
+
+        if (!response.ok) {
+          throw new Error('Erro ao buscar transações');
+        }
+
+        const data = await response.json();
+        setTransactions(data);
+      } catch (error) {
+        console.error('Erro ao buscar transações:', error);
+        toast({
+          title: "Erro",
+          description: "Não foi possível carregar suas transações.",
+          variant: "destructive",
+        });
+      }
+    };
+
+    fetchAccounts();
+    fetchTransactions();
   }, [router])
 
   /**
@@ -105,23 +141,39 @@ export default function DashboardPage() {
    * Calcula receitas, despesas e saldo total
    */
   useEffect(() => {
-    // Calcular totais de receitas e despesas
+    // Calcular totais de receitas e despesas apenas para transações vinculadas a contas existentes
+    const accountIds = accounts.map((account) => account.id)
+    const validTransactions = transactions.filter((transaction) => accountIds.includes(transaction.accountId))
+
     let income = 0
     let expense = 0
 
-    transactions.forEach((transaction) => {
+    // Criar um mapa para armazenar o saldo atualizado de cada conta
+    const accountBalances = new Map<string, number>()
+    
+    // Inicializar o mapa com os saldos atuais das contas
+    accounts.forEach(account => {
+      accountBalances.set(account.id, account.balance)
+    })
+
+    // Processar cada transação e atualizar os saldos
+    validTransactions.forEach((transaction) => {
+      const currentBalance = accountBalances.get(transaction.accountId) || 0
+      
       if (transaction.type === "income") {
         income += transaction.amount
+        accountBalances.set(transaction.accountId, currentBalance + transaction.amount)
       } else {
         expense += transaction.amount
+        accountBalances.set(transaction.accountId, currentBalance - transaction.amount)
       }
     })
 
     setTotalIncome(income)
     setTotalExpense(expense)
 
-    // Calcular o saldo total a partir das contas bancárias
-    const totalBalance = accounts.reduce((total, account) => total + account.balance, 0)
+    // Calcular o saldo total considerando as transações
+    const totalBalance = Array.from(accountBalances.values()).reduce((total, balance) => total + balance, 0)
     setBalance(totalBalance)
   }, [transactions, accounts])
 
