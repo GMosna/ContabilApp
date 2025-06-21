@@ -20,5 +20,6 @@ public class TransactionRequestDTO {
     private Long categoryId; // ID da categoria
     private Long transactionTypeId; // ID do tipo de transação
     private Long userId; // ID do usuário
+    private Long accountId; // Adicionado para vincular a transação a uma conta
 }
 

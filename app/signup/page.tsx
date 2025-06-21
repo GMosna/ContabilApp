@@ -125,7 +125,12 @@ export default function SignupPage() {
             errorMessage = typeof serverMessage === 'string' ? serverMessage : 'Dados inválidos. Verifique as informações.';
             console.log('Dados que causaram erro:', requestData);
           } else if (error.response.status === 403) {
-            errorMessage = 'Erro de permissão. Verifique se o servidor está configurado corretamente.';
+            // Mensagem aprimorada para erros de dados duplicados ou inválidos (sem mensagem específica do backend)
+            if (error.response.data && error.response.data.message) {
+              errorMessage = error.response.data.message;
+            } else {
+              errorMessage = 'Um usuário com este CPF ou email já pode estar cadastrado. Por favor, verifique os dados ou tente fazer login.';
+            }
             console.log('Erro de CORS ou configuração:', error.response);
           } else if (error.response.data?.message) {
             errorMessage = error.response.data.message;

@@ -5,14 +5,19 @@ import Link from "next/link"
 import Image from "next/image"
 import { ArrowRight, BarChart3, LogOut, PiggyBank, Shield } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { useRouter } from "next/navigation"
 
 export default function Home() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const router = useRouter()
 
   useEffect(() => {
     // Verificar se o usuário está logado ao carregar a página
     const loggedIn = localStorage.getItem("isLoggedIn") === "true"
     setIsLoggedIn(loggedIn)
+    if (loggedIn) {
+      router.push("/accounts")
+    }
   }, [])
 
   const handleLogout = () => {
@@ -251,7 +256,7 @@ export default function Home() {
                   />
                 </div>
                 <div className="text-center">
-                  <h3 className="text-xl font-bold">Nome do Fundador 1</h3>
+                  <h3 className="text-xl font-bold">Guilherme Henrique Ferreira Mosna</h3>
                   <p className="text-sm text-muted-foreground">CEO & Co-Fundador</p>
                   <p className="mt-2 text-muted-foreground">
                     Especialista em finanças com mais de 10 anos de experiência no mercado financeiro. Apaixonado por
@@ -270,8 +275,8 @@ export default function Home() {
                   />
                 </div>
                 <div className="text-center">
-                  <h3 className="text-xl font-bold">Nome do Fundador 2</h3>
-                  <p className="text-sm text-muted-foreground">CTO & Co-Fundador</p>
+                  <h3 className="text-xl font-bold">João Vitor Morito da Silva</h3>
+                  <p className="text-sm text-muted-foreground">CEO & Co-Fundador</p>
                   <p className="mt-2 text-muted-foreground">
                     Desenvolvedor e arquiteto de software com experiência em startups de tecnologia financeira. Focado
                     em criar soluções intuitivas e seguras.
@@ -289,7 +294,7 @@ export default function Home() {
                   />
                 </div>
                 <div className="text-center">
-                  <h3 className="text-xl font-bold">Nome do Fundador 3</h3>
+                  <h3 className="text-xl font-bold">Victor Carlos Costa</h3>
                   <p className="text-sm text-muted-foreground">COO & Co-Fundador</p>
                   <p className="mt-2 text-muted-foreground">
                     Especialista em experiência do usuário e estratégias de negócios. Dedicado a tornar o gerenciamento

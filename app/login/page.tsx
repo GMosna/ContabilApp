@@ -3,13 +3,13 @@
 import type React from "react"
 
 import Link from "next/link"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { ArrowLeft } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { toast } from "@/components/ui/use-toast"
+import { toast, dismiss } from "@/components/ui/use-toast"
 import api from "@/services/api"
 
 export default function LoginPage() {
@@ -19,6 +19,7 @@ export default function LoginPage() {
     email: "",
     password: "",
   })
+  const toastIdRef = useRef<string | null>(null)
 
   // Verificar se o usuário já está autenticado
   useEffect(() => {
@@ -49,20 +50,36 @@ export default function LoginPage() {
       if (response.data.token) {
         localStorage.setItem('authToken', response.data.token);
         localStorage.setItem('isLoggedIn', 'true');
-        
+        // Salva userData corretamente, mesmo que o backend não retorne o objeto user
         if (response.data.user) {
           localStorage.setItem('userData', JSON.stringify(response.data.user));
+        } else {
+          // Garante que userData seja salvo com nome e email
+          localStorage.setItem('userData', JSON.stringify({
+            id: response.data.id || "",
+            name: response.data.name || "",
+            email: formData.email
+          }));
         }
-
-        toast({
+        const { id } = toast({
           title: "Login realizado com sucesso",
-          description: "Você será redirecionado para o dashboard.",
+          description: "Você será redirecionado para as dicas financeiras.",
+          variant: "success",
         });
-
+        toastIdRef.current = id;
         // Pequeno atraso para garantir que o toast seja exibido
         setTimeout(() => {
-          router.push("/dashboard");
+          if (toastIdRef.current) {
+            dismiss(toastIdRef.current);
+          }
+          router.push("/financial-tips");
         }, 1000);
+      } else {
+        toast({
+          title: "Erro ao fazer login",
+          description: "Resposta inesperada do servidor.",
+          variant: "destructive",
+        });
       }
     } catch (error: any) {
       console.error("Erro ao fazer login:", error);

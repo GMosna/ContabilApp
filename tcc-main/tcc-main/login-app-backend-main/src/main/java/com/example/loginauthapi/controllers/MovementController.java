@@ -23,5 +23,11 @@ public class MovementController {
         List<Movement> movements = movementService.getMovementsByAccount(id);
         return ResponseEntity.ok(movements);
     }
+
+    @GetMapping("/account/{id}")
+    public ResponseEntity<List<Movement>> getMovementsByAccount(@PathVariable Long id) {
+        List<Movement> movements = movementService.getMovementsByAccount(id);
+        return ResponseEntity.ok(movements);
+    }
 }
 

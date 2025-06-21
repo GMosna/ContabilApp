@@ -78,6 +78,12 @@ public class AccountService {
         );
     }
 
+    // Novo método: Retorna a entidade Account diretamente pelo ID
+    public Account findAccountById(Long id) {
+        return repository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException(id));
+    }
+
     //altera o dado da conta
     private void updateData(Account account, Account obj) {
         account.setName(obj.getName());
@@ -146,7 +152,7 @@ public class AccountService {
         repository.save(account);
 
         Movement movement = new Movement(
-                id,
+                account,
                 "DEPOSIT",
                 value,
                 LocalDateTime.now()
@@ -170,7 +176,7 @@ public class AccountService {
         repository.save(account);
 
         Movement movement = new Movement(
-                id,
+                account,
                 "WITHDRAW",
                 value,
                 LocalDateTime.now()

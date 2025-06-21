@@ -14,7 +14,7 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import Image from "next/image"
-import { CreditCard, DollarSign, Home, LogOut, Plus, Wallet } from "lucide-react"
+import { CreditCard, DollarSign, Home, LogOut, Plus, Wallet, BarChart3 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import AuthService from "@/services/authService"
@@ -225,7 +225,7 @@ export default function DashboardPage() {
       <header className="border-b border-zinc-700">
         <div className="container flex h-16 items-center justify-between px-4 md:px-6">
           <Link href="/" className="flex items-center gap-2">
-            <Image src="/logo-cashflow.jpg" alt="CashFlow Logo" width={40} height={40} className="rounded-md" />
+            <Image src="/img/dolar.png" alt="CashFlow Logo" width={40} height={40} className="rounded-md" />
             <span className="text-xl font-bold text-zinc-100">CashFlow</span>
           </Link>
           <nav className="flex gap-4 sm:gap-6 items-center">
@@ -236,7 +236,7 @@ export default function DashboardPage() {
               Dicas Financeiras
             </Link>
             <Link href="/dashboard" className="text-sm font-medium text-zinc-300 hover:text-white transition-colors">
-              Dashboard
+              Visão Geral
             </Link>
             <Button
               variant="ghost"
@@ -261,7 +261,10 @@ export default function DashboardPage() {
             </Link>
           </div>
           <nav className="grid gap-1 p-2">
-            <Link href="/dashboard" className="flex items-center gap-2 rounded-lg bg-zinc-700 px-3 py-2 text-zinc-100">
+            <Link
+              href="/dashboard"
+              className="flex items-center gap-2 rounded-lg px-3 py-2 text-zinc-300 hover:bg-zinc-800 hover:text-white"
+            >
               <Home className="h-5 w-5" />
               <span>Visão Geral</span>
             </Link>
@@ -278,6 +281,13 @@ export default function DashboardPage() {
             >
               <CreditCard className="h-5 w-5" />
               <span>Contas</span>
+            </Link>
+            <Link
+              href="/dashboard/charts"
+              className="flex items-center gap-2 rounded-lg px-3 py-2 text-zinc-300 hover:bg-zinc-800 hover:text-white"
+            >
+              <BarChart3 className="h-5 w-5" />
+              <span>Dashboard</span>
             </Link>
           </nav>
         </aside>

@@ -24,6 +24,7 @@ import {
   Search,
   ArrowUpDown,
   Pencil,
+  BarChart3,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -52,6 +53,10 @@ import {
 } from "@/components/ui/alert-dialog"
 import { toast } from "@/components/ui/use-toast"
 import AuthService from "@/services/authService"
+import movementRepository, { Movement } from "@/services/movementRepository"
+import { Bar, Pie, Line } from 'react-chartjs-2'
+import { Chart, CategoryScale, LinearScale, BarElement, ArcElement, PointElement, LineElement, Tooltip, Legend } from 'chart.js'
+Chart.register(CategoryScale, LinearScale, BarElement, ArcElement, PointElement, LineElement, Tooltip, Legend)
 
 // Interface para as contas bancárias
 interface BankAccount {
@@ -139,53 +144,13 @@ export default function AccountsPage() {
   const [movementType, setMovementType] = useState<string>("all")
   const [searchTerm, setSearchTerm] = useState<string>("")
   const [filteredTransactions, setFilteredTransactions] = useState<Transaction[]>([])
-  const [dateFilter, setDateFilter] = useState<string>(new Date().toISOString().slice(0, 7))
-
-  // Mock transactions data (replace with actual data fetching)
-  // This is added to resolve the "transactions is not defined" error
-  // In a real application, you would fetch this data from an API or database
-  const [mockTransactions, setMockTransactions] = useState<Transaction[]>([
-    {
-      id: "1",
-      description: "Aluguel",
-      amount: 1200,
-      type: "expense",
-      category: "housing",
-      date: "2024-01-15",
-      accountId: "123",
-    },
-    {
-      id: "2",
-      description: "Salário",
-      amount: 5000,
-      type: "income",
-      category: "other_income",
-      date: "2024-01-30",
-      accountId: "123",
-    },
-  ])
+  const [dateFilter, setDateFilter] = useState<string>("")
+  const [monthFilter, setMonthFilter] = useState<string>("")
+  const [dateMode, setDateMode] = useState<'date' | 'month'>("date")
 
   // Adicionar estado para edição
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [accountToEdit, setAccountToEdit] = useState<BankAccount | null>(null)
-
-  // Adicionar função para calcular o saldo de transações por conta
-  const getAccountTransactionBalance = (accountId: string) => {
-    return mockTransactions
-      .filter((t) => t.accountId === accountId)
-      .reduce((total, t) => {
-        if (t.type === "income") {
-          return total + t.amount
-        } else {
-          return total - t.amount
-        }
-      }, 0)
-  }
-
-  // Adicionar função para contar transações por conta
-  const getAccountTransactionCount = (accountId: string) => {
-    return mockTransactions.filter((t) => t.accountId === accountId).length
-  }
 
   // Função para buscar as contas do backend
   const fetchAccounts = async () => {
@@ -248,16 +213,48 @@ export default function AccountsPage() {
       filtered = filtered.filter((t) => t.description.toLowerCase().includes(searchTerm.toLowerCase()))
     }
 
-    // Filtrar por data
-    if (dateFilter) {
-      filtered = filtered.filter((t) => t.date.startsWith(dateFilter))
+    // Filtrar por data específica ou mês
+    if (dateMode === 'date' && dateFilter) {
+      filtered = filtered.filter((t) => t.date.slice(0, 10) === dateFilter)
+    } else if (dateMode === 'month' && monthFilter) {
+      filtered = filtered.filter((t) => t.date.startsWith(monthFilter))
     }
 
     // Ordenar por data (mais recente primeiro)
     filtered = [...filtered].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
 
     setFilteredTransactions(filtered)
-  }, [selectedAccountId, transactions, movementType, searchTerm, dateFilter])
+  }, [selectedAccountId, transactions, movementType, searchTerm, dateFilter, monthFilter, dateMode])
+
+  // Buscar movimentos reais ao selecionar uma conta
+  useEffect(() => {
+    fetchMovements()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAccountId])
+
+  // Função para buscar movimentos bancários
+  const fetchMovements = async () => {
+    if (!selectedAccountId) {
+      setTransactions([])
+      return
+    }
+    try {
+      const movements = await movementRepository.getByAccount(selectedAccountId.toString())
+      // Converter os movimentos para o formato Transaction
+      const transactions: Transaction[] = movements.map((m) => ({
+        id: m.id,
+        description: m.description || (m.type === "deposit" ? "Depósito" : "Saque"),
+        amount: m.amount,
+        type: m.type === "deposit" ? "income" : "expense",
+        category: m.type === "deposit" ? "other_income" : "other_expense",
+        date: m.date,
+        accountId: m.accountId,
+      }))
+      setTransactions(transactions)
+    } catch (error) {
+      setTransactions([])
+    }
+  }
 
   const handleLogout = () => {
     localStorage.removeItem("isLoggedIn")
@@ -397,106 +394,97 @@ export default function AccountsPage() {
   };
 
   // Função para processar depósito
-  const handleDeposit = () => {
+  const handleDeposit = async () => {
     if (!validateMovementForm() || bankMovement.accountId === null) return
-
-    // Encontrar a conta selecionada
     const accountIndex = accounts.findIndex((account) => account.id === bankMovement.accountId)
     if (accountIndex === -1) return
-
-    // Criar uma cópia das contas
-    const updatedAccounts = [...accounts]
-
-    // Atualizar o saldo da conta
-    updatedAccounts[accountIndex] = {
-      ...updatedAccounts[accountIndex],
-      balance: updatedAccounts[accountIndex].balance + Number(bankMovement.amount),
+    try {
+      // Requisição PATCH para depósito (atualiza saldo e cria movimento no backend)
+      const response = await AuthService.authenticatedRequest(
+        `/account/${bankMovement.accountId}/deposito`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ value: Number(bankMovement.amount) }),
+        }
+      )
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.message || 'Erro ao realizar depósito')
+      }
+      // Conta atualizada após o depósito
+      const updatedAccount = await response.json()
+      // Atualizar o estado das contas
+      const updatedAccounts = [...accounts]
+      updatedAccounts[accountIndex] = updatedAccount
+      setAccounts(updatedAccounts)
+      // Fechar o diálogo e resetar o formulário
+      setIsDepositDialogOpen(false)
+      setBankMovement({
+        accountId: null,
+        amount: "",
+        movementDate: new Date().toISOString().slice(0, 10),
+      })
+      setMovementErrors({})
+      toast({
+        title: "Sucesso",
+        description: "Depósito realizado com sucesso!",
+        variant: "default",
+      })
+      await fetchMovements()
+    } catch (error: any) {
+      toast({
+        title: "Erro ao depositar",
+        description: error.message || "Não foi possível realizar o depósito.",
+        variant: "destructive",
+      })
     }
-
-    // Criar uma nova transação para o depósito
-    const newTransaction: Transaction = {
-      id: Date.now().toString(),
-      description: `Depósito em ${getBankLabel(updatedAccounts[accountIndex].bank)}`,
-      amount: Number(bankMovement.amount),
-      type: "income",
-      category: "other_income",
-      date: bankMovement.movementDate,
-      accountId: bankMovement.accountId.toString(),
-    }
-
-    // Atualizar o estado
-    setAccounts(updatedAccounts)
-    const updatedTransactions = [newTransaction, ...transactions]
-    setTransactions(updatedTransactions)
-
-    // Salvar no localStorage
-    localStorage.setItem("bankAccounts", JSON.stringify(updatedAccounts))
-    localStorage.setItem("transactions", JSON.stringify(updatedTransactions))
-
-    // Fechar o diálogo e resetar o formulário
-    setIsDepositDialogOpen(false)
-    setBankMovement({
-      accountId: null,
-      amount: "",
-      movementDate: new Date().toISOString().slice(0, 10),
-    })
-    setMovementErrors({})
   }
 
   // Função para processar saque
-  const handleWithdraw = () => {
+  const handleWithdraw = async () => {
     if (!validateMovementForm() || bankMovement.accountId === null) return
-
-    // Encontrar a conta selecionada
     const accountIndex = accounts.findIndex((account) => account.id === bankMovement.accountId)
     if (accountIndex === -1) return
-
-    // Verificar se há saldo suficiente
-    if (accounts[accountIndex].balance < Number(bankMovement.amount)) {
-      setMovementErrors({
-        ...movementErrors,
-        amount: "Saldo insuficiente para esta operação",
+    try {
+      // Requisição PATCH para saque (atualiza saldo e cria movimento no backend)
+      const response = await AuthService.authenticatedRequest(
+        `/account/${bankMovement.accountId}/saque`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ value: Number(bankMovement.amount) }),
+        }
+      )
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.message || 'Erro ao realizar saque')
+      }
+      // Conta atualizada após o saque
+      const updatedAccount = await response.json()
+      // Atualizar o estado das contas
+      const updatedAccounts = [...accounts]
+      updatedAccounts[accountIndex] = updatedAccount
+      setAccounts(updatedAccounts)
+      // Fechar o diálogo e resetar o formulário
+      setIsWithdrawDialogOpen(false)
+      setBankMovement({
+        accountId: null,
+        amount: "",
+        movementDate: new Date().toISOString().slice(0, 10),
       })
-      return
+      setMovementErrors({})
+      toast({
+        title: "Sucesso",
+        description: "Saque realizado com sucesso!",
+        variant: "default",
+      })
+      await fetchMovements()
+    } catch (error: any) {
+      toast({
+        title: "Erro ao sacar",
+        description: error.message || "Não foi possível realizar o saque.",
+        variant: "destructive",
+      })
     }
-
-    // Criar uma cópia das contas
-    const updatedAccounts = [...accounts]
-
-    // Atualizar o saldo da conta
-    updatedAccounts[accountIndex] = {
-      ...updatedAccounts[accountIndex],
-      balance: updatedAccounts[accountIndex].balance - Number(bankMovement.amount),
-    }
-
-    // Criar uma nova transação para o saque
-    const newTransaction: Transaction = {
-      id: Date.now().toString(),
-      description: `Saque em ${getBankLabel(updatedAccounts[accountIndex].bank)}`,
-      amount: Number(bankMovement.amount),
-      type: "expense",
-      category: "other_expense",
-      date: bankMovement.movementDate,
-      accountId: bankMovement.accountId.toString(),
-    }
-
-    // Atualizar o estado
-    setAccounts(updatedAccounts)
-    const updatedTransactions = [newTransaction, ...transactions]
-    setTransactions(updatedTransactions)
-
-    // Salvar no localStorage
-    localStorage.setItem("bankAccounts", JSON.stringify(updatedAccounts))
-    localStorage.setItem("transactions", JSON.stringify(updatedTransactions))
-
-    // Fechar o diálogo e resetar o formulário
-    setIsWithdrawDialogOpen(false)
-    setBankMovement({
-      accountId: null,
-      amount: "",
-      movementDate: new Date().toISOString().slice(0, 10),
-    })
-    setMovementErrors({})
   }
 
   // Função para excluir uma conta
@@ -676,7 +664,7 @@ export default function AccountsPage() {
       <header className="border-b border-zinc-700">
         <div className="container flex h-16 items-center justify-between px-4 md:px-6">
           <Link href="/" className="flex items-center gap-2">
-            <Image src="/logo-cashflow.jpg" alt="CashFlow Logo" width={40} height={40} className="rounded-md" />
+            <Image src="/img/dolar.png" alt="CashFlow Logo" width={40} height={40} className="rounded-md" />
             <span className="text-xl font-bold text-zinc-100">CashFlow</span>
           </Link>
           <nav className="flex gap-4 sm:gap-6 items-center">
@@ -687,7 +675,7 @@ export default function AccountsPage() {
               Dicas Financeiras
             </Link>
             <Link href="/dashboard" className="text-sm font-medium text-zinc-300 hover:text-white transition-colors">
-              Dashboard
+              Visão Geral
             </Link>
             <Button
               variant="ghost"
@@ -724,9 +712,19 @@ export default function AccountsPage() {
               <DollarSign className="h-5 w-5" />
               <span>Transações</span>
             </Link>
-            <Link href="/accounts" className="flex items-center gap-2 rounded-lg bg-zinc-700 px-3 py-2 text-zinc-100">
+            <Link
+              href="/accounts"
+              className="flex items-center gap-2 rounded-lg px-3 py-2 text-zinc-300 hover:bg-zinc-800 hover:text-white"
+            >
               <CreditCard className="h-5 w-5" />
               <span>Contas</span>
+            </Link>
+            <Link
+              href="/dashboard?tab=dashboard"
+              className="flex items-center gap-2 rounded-lg px-3 py-2 text-zinc-300 hover:bg-zinc-800 hover:text-white"
+            >
+              <BarChart3 className="h-5 w-5" />
+              <span>Dashboard</span>
             </Link>
           </nav>
         </aside>
@@ -1117,7 +1115,7 @@ export default function AccountsPage() {
                           </div>
                           <div className="flex items-center gap-2">
                             <DollarSign className="h-4 w-4 text-zinc-400" />
-                            <span className="text-zinc-300">{getAccountTransactionCount(account.id.toString())} transações</span>
+                            <span className="text-zinc-300">{transactions.filter((t) => t.accountId === account.id.toString()).length} transações</span>
                           </div>
                         </div>
                         <div className="pt-2 flex justify-between">
@@ -1170,151 +1168,6 @@ export default function AccountsPage() {
                 ))
               )}
             </div>
-
-            {/* Seção de Movimentos Bancários */}
-            <Card className="cement-card border-zinc-700 shadow-lg">
-              <CardHeader>
-                <CardTitle className="text-zinc-100">Movimentos Bancários</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="grid gap-4 md:grid-cols-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="account-filter" className="text-zinc-300">
-                        Conta
-                      </Label>
-                      <Select
-                        value={selectedAccountId?.toString()}
-                        onValueChange={(value) => setSelectedAccountId(Number(value))}
-                      >
-                        <SelectTrigger className="bg-zinc-800 border-zinc-700 text-zinc-200">
-                          <SelectValue placeholder="Selecione uma conta" />
-                        </SelectTrigger>
-                        <SelectContent className="bg-zinc-800 border-zinc-700">
-                          {accounts.map((account) => (
-                            <SelectItem key={account.id} value={account.id.toString()} className="text-zinc-200">
-                              {account.name} - {getBankLabel(account.bank)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="movement-type" className="text-zinc-300">
-                        Tipo
-                      </Label>
-                      <Select value={movementType} onValueChange={setMovementType}>
-                        <SelectTrigger className="bg-zinc-800 border-zinc-700 text-zinc-200">
-                          <SelectValue placeholder="Todos os tipos" />
-                        </SelectTrigger>
-                        <SelectContent className="bg-zinc-800 border-zinc-700">
-                          <SelectItem value="all" className="text-zinc-200">
-                            Todos os tipos
-                          </SelectItem>
-                          <SelectItem value="deposit" className="text-zinc-200">
-                            Depósitos
-                          </SelectItem>
-                          <SelectItem value="withdraw" className="text-zinc-200">
-                            Saques
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="date-filter" className="text-zinc-300">
-                        Mês
-                      </Label>
-                      <Input
-                        id="date-filter"
-                        type="month"
-                        value={dateFilter}
-                        onChange={(e) => setDateFilter(e.target.value)}
-                        className="bg-zinc-800 border-zinc-700 text-zinc-200"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="search-movement" className="text-zinc-300">
-                        Buscar
-                      </Label>
-                      <div className="relative">
-                        <Search className="absolute left-2 top-2.5 h-4 w-4 text-zinc-500" />
-                        <Input
-                          id="search-movement"
-                          placeholder="Buscar movimento..."
-                          value={searchTerm}
-                          onChange={(e) => setSearchTerm(e.target.value)}
-                          className="bg-zinc-800 border-zinc-700 text-zinc-200 pl-8 placeholder:text-zinc-500"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {!selectedAccountId ? (
-                    <div className="text-center py-8">
-                      <p className="text-zinc-400">Selecione uma conta para visualizar os movimentos.</p>
-                    </div>
-                  ) : filteredTransactions.length === 0 ? (
-                    <div className="text-center py-8">
-                      <p className="text-zinc-400">
-                        Nenhum movimento encontrado para esta conta com os filtros atuais.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="rounded-md border border-zinc-700 overflow-hidden">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="bg-zinc-800 border-b border-zinc-700">
-                              <th className="px-4 py-3 text-left font-medium text-zinc-300">
-                                <div className="flex items-center gap-1 cursor-pointer">
-                                  Data <ArrowUpDown className="h-3 w-3" />
-                                </div>
-                              </th>
-                              <th className="px-4 py-3 text-left font-medium text-zinc-300">
-                                <div className="flex items-center gap-1 cursor-pointer">
-                                  Descrição <ArrowUpDown className="h-3 w-3" />
-                                </div>
-                              </th>
-                              <th className="px-4 py-3 text-left font-medium text-zinc-300">
-                                <div className="flex items-center gap-1 cursor-pointer">
-                                  Tipo <ArrowUpDown className="h-3 w-3" />
-                                </div>
-                              </th>
-                              <th className="px-4 py-3 text-right font-medium text-zinc-300">
-                                <div className="flex items-center justify-end gap-1 cursor-pointer">
-                                  Valor <ArrowUpDown className="h-3 w-3" />
-                                </div>
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {filteredTransactions.map((transaction) => (
-                              <tr
-                                key={transaction.id}
-                                className="border-b border-zinc-700 last:border-0 hover:bg-zinc-800/50"
-                              >
-                                <td className="px-4 py-3 text-zinc-300">{formatDate(transaction.date)}</td>
-                                <td className="px-4 py-3 text-zinc-200 font-medium">{transaction.description}</td>
-                                <td className="px-4 py-3 text-zinc-300">
-                                  {transaction.type === "income" ? "Depósito" : "Saque"}
-                                </td>
-                                <td
-                                  className={`px-4 py-3 text-right font-medium ${
-                                    transaction.type === "income" ? "text-emerald-400" : "text-red-400"
-                                  }`}
-                                >
-                                  {transaction.type === "income" ? "+" : "-"} {formatCurrency(transaction.amount)}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
           </div>
         </main>
       </div>

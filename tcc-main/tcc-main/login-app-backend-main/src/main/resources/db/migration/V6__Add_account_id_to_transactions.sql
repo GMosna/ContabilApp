@@ -1,0 +1,2 @@
+ALTER TABLE transactions ADD COLUMN account_id BIGINT;
+ALTER TABLE transactions ADD CONSTRAINT FK_TRANSACTION_ACCOUNT FOREIGN KEY (account_id) REFERENCES tb_account(id); 

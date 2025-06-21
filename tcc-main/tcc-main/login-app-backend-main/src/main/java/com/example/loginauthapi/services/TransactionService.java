@@ -6,10 +6,13 @@ import com.example.loginauthapi.domain.Category;
 import com.example.loginauthapi.domain.Transaction;
 import com.example.loginauthapi.domain.TransactionType;
 import com.example.loginauthapi.domain.User;
+import com.example.loginauthapi.domain.Account;
+import com.example.loginauthapi.domain.Movement;
 import com.example.loginauthapi.repositories.CategoryRepository;
 import com.example.loginauthapi.repositories.TransactionRepository;
 import com.example.loginauthapi.repositories.TransactionTypeRepository;
 import com.example.loginauthapi.repositories.UserRepository;
+import com.example.loginauthapi.repositories.MovementRepository;
 import com.example.loginauthapi.services.exceptions.DatabaseException;
 import com.example.loginauthapi.services.exceptions.ResourceNotFoundException;
 import jakarta.persistence.EntityNotFoundException;
@@ -22,6 +25,8 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 @Service
 public class TransactionService {
@@ -38,6 +43,12 @@ public class TransactionService {
     @Autowired
     private TransactionTypeRepository transactionTypeRepository;
 
+    @Autowired
+    private AccountService accountService;
+
+    @Autowired
+    private MovementRepository movementRepository;
+
     @Transactional
     public Transaction newTransaction(TransactionRequestDTO dto) {
         // Buscar o User pelo ID
@@ -52,6 +63,12 @@ public class TransactionService {
         TransactionType transactionType = transactionTypeRepository.findById(dto.getTransactionTypeId())
                 .orElseThrow(() -> new RuntimeException("Transaction Type not found"));
 
+        // Lidar com a conta, pode ser nulo para dinheiro em espécie
+        Account account = null;
+        if (dto.getAccountId() != null) {
+            account = accountService.findAccountById(dto.getAccountId()); // Usar o novo método
+        }
+
         // Criar a nova transação
         Transaction transaction = new Transaction();
         transaction.setDescription(dto.getDescription());
@@ -60,9 +77,28 @@ public class TransactionService {
         transaction.setUser(user);
         transaction.setCategory(category);
         transaction.setTransactionType(transactionType);
+        transaction.setAccount(account); // Definir a conta na transação
 
-        // Salvar e retornar a transação
-        return transactionRepository.save(transaction);
+        // Salvar a transação primeiro para obter o ID se necessário para movements, embora o AccountService já crie movements
+        Transaction savedTransaction = transactionRepository.save(transaction);
+
+        // Atualizar o saldo da conta e criar Movement se necessário
+        if (account != null) {
+            if (transactionType.getTransactionType().equalsIgnoreCase("INCOME")) {
+                accountService.realizaDeposito(account.getId(), dto.getAmount());
+                // Criar Movement correspondente
+                Movement movement = new Movement(account, "DEPOSIT", dto.getAmount(), dto.getDate() != null ? dto.getDate() : LocalDateTime.now());
+                movementRepository.save(movement);
+            } else if (transactionType.getTransactionType().equalsIgnoreCase("EXPENSE")) {
+                accountService.realizaSaque(account.getId(), dto.getAmount());
+                // Criar Movement correspondente
+                Movement movement = new Movement(account, "WITHDRAW", dto.getAmount(), dto.getDate() != null ? dto.getDate() : LocalDateTime.now());
+                movementRepository.save(movement);
+            }
+        }
+
+        // Retornar a transação salva
+        return savedTransaction;
     }
 
 
@@ -73,8 +109,25 @@ public class TransactionService {
                 .collect(Collectors.toList());
     }
 
+    @Transactional
     public void delete(Long id){
         try {
+            // Buscar a transação antes de excluir para reverter o impacto no saldo da conta
+            Transaction transactionToDelete = transactionRepository.findById(id)
+                    .orElseThrow(() -> new ResourceNotFoundException("Transaction not found with id: " + id));
+
+            if (transactionToDelete.getAccount() != null) {
+                Account account = transactionToDelete.getAccount();
+                BigDecimal amount = transactionToDelete.getAmount();
+                String transactionType = transactionToDelete.getTransactionType().getTransactionType();
+
+                if (transactionType.equalsIgnoreCase("INCOME")) {
+                    accountService.realizaSaque(account.getId(), amount); // Reverter receita
+                } else if (transactionType.equalsIgnoreCase("EXPENSE")) {
+                    accountService.realizaDeposito(account.getId(), amount); // Reverter despesa
+                }
+            }
+
             transactionRepository.deleteById(id);
         } catch (EmptyResultDataAccessException e){
             throw new ResourceNotFoundException(id);
@@ -102,8 +155,21 @@ public class TransactionService {
     public Transaction update(Long id, TransactionRequestDTO dto) {
         try {
             // Buscar a transação existente pelo ID
-            Transaction transaction = transactionRepository.findById(id)
+            Transaction existingTransaction = transactionRepository.findById(id)
                     .orElseThrow(() -> new ResourceNotFoundException("Transaction not found with id: " + id));
+
+            // Reverter o impacto da transação original no saldo da conta, se houver
+            if (existingTransaction.getAccount() != null) {
+                Account originalAccount = existingTransaction.getAccount();
+                BigDecimal originalAmount = existingTransaction.getAmount();
+                String originalTransactionType = existingTransaction.getTransactionType().getTransactionType();
+
+                if (originalTransactionType.equalsIgnoreCase("INCOME")) {
+                    accountService.realizaSaque(originalAccount.getId(), originalAmount); // Reverter receita
+                } else if (originalTransactionType.equalsIgnoreCase("EXPENSE")) {
+                    accountService.realizaDeposito(originalAccount.getId(), originalAmount); // Reverter despesa
+                }
+            }
 
             // Buscar o User pelo ID fornecido no DTO
             User user = userRepository.findById(dto.getUserId())
@@ -117,16 +183,35 @@ public class TransactionService {
             TransactionType transactionType = transactionTypeRepository.findById(dto.getTransactionTypeId())
                     .orElseThrow(() -> new ResourceNotFoundException("TransactionType not found with id: " + dto.getTransactionTypeId()));
 
-            // Atualizar os dados da transação
-            transaction.setDescription(dto.getDescription());
-            transaction.setAmount(dto.getAmount());
-            transaction.setDate(dto.getDate());
-            transaction.setTransactionType(transactionType);
-            transaction.setUser(user);
-            transaction.setCategory(category);
+            // Lidar com a nova conta, pode ser nulo para dinheiro em espécie
+            Account newAccount = null;
+            if (dto.getAccountId() != null) {
+                newAccount = accountService.findAccountById(dto.getAccountId());
+            }
 
-            // Salvar e retornar a transação atualizada
-            return transactionRepository.save(transaction);
+            // Atualizar os dados da transação
+            existingTransaction.setDescription(dto.getDescription());
+            existingTransaction.setAmount(dto.getAmount());
+            existingTransaction.setDate(dto.getDate());
+            existingTransaction.setTransactionType(transactionType);
+            existingTransaction.setUser(user);
+            existingTransaction.setCategory(category);
+            existingTransaction.setAccount(newAccount); // Definir a nova conta
+
+            // Salvar a transação atualizada
+            Transaction updatedTransaction = transactionRepository.save(existingTransaction);
+
+            // Aplicar o impacto da nova transação no saldo da conta
+            if (newAccount != null) {
+                if (transactionType.getTransactionType().equalsIgnoreCase("INCOME")) {
+                    accountService.realizaDeposito(newAccount.getId(), dto.getAmount());
+                } else if (transactionType.getTransactionType().equalsIgnoreCase("EXPENSE")) {
+                    accountService.realizaSaque(newAccount.getId(), dto.getAmount());
+                }
+            }
+
+            // Retornar a transação atualizada
+            return updatedTransaction;
         } catch (EntityNotFoundException e) {
             throw new ResourceNotFoundException(id);
         }

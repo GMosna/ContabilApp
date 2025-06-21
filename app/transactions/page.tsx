@@ -11,7 +11,7 @@
 
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import Image from "next/image"
@@ -52,34 +52,38 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import AuthService from "@/services/authService"
+import { toast } from "@/components/ui/use-toast"
+import TransactionTypeService, { TransactionType as TransactionTypeInterface } from "@/services/transactionTypeService"
 
 /**
  * Tipos e interfaces para os dados da aplicação
  */
 // Tipos para as transações
 type TransactionType = "income" | "expense"
-type TransactionCategory =
-  | "salary"
-  | "investment"
-  | "other_income"
-  | "food"
-  | "transport"
-  | "housing"
-  | "utilities"
-  | "entertainment"
-  | "health"
-  | "education"
-  | "other_expense"
+
+// Nova Interface para Categoria (vindo do backend)
+interface Category {
+  id: number;
+  categoryName: string;
+}
+
+// Nova Interface para Tipo de Transação (vindo do backend)
+interface TransactionTypeBackend {
+  id: number;
+  transactionType: string;
+}
 
 // Interface para transações
 interface Transaction {
   id: string
   description: string
   amount: number
-  type: TransactionType
-  category: TransactionCategory
+  type: TransactionType // 'income' | 'expense'
+  category: string // Agora armazena o ID da categoria como string
   date: string
   accountId: string
+  transactionTypeId?: string; // Novo campo para o ID do tipo de transação
 }
 
 // Interface para contas bancárias
@@ -92,24 +96,28 @@ interface BankAccount {
   balance: number
 }
 
-// Mapeamento de categorias para ícones e nomes amigáveis
-const categoryInfo = {
-  salary: { icon: DollarSign, name: "Salário" },
-  investment: { icon: DollarSign, name: "Investimento" },
-  other_income: { icon: DollarSign, name: "Outras Receitas" },
-  food: { icon: CreditCard, name: "Alimentação" },
-  transport: { icon: CreditCard, name: "Transporte" },
-  housing: { icon: CreditCard, name: "Moradia" },
-  utilities: { icon: CreditCard, name: "Contas" },
-  entertainment: { icon: CreditCard, name: "Entretenimento" },
-  health: { icon: CreditCard, name: "Saúde" },
-  education: { icon: CreditCard, name: "Educação" },
-  other_expense: { icon: CreditCard, name: "Outras Despesas" },
-}
-
 /**
  * Funções auxiliares para formatação e preparação de dados
  */
+// Função para obter o nome amigável da categoria
+const getCategoryDisplayName = (categoryId: string, categories: Category[]) => {
+  const category = categories.find(cat => cat.id.toString() === categoryId);
+  return category ? category.categoryName : "Desconhecido";
+};
+
+// Função para obter o ícone da categoria (você pode personalizar isso)
+const getCategoryIcon = (categoryId: string, categories: Category[], isExpense: boolean) => {
+  const category = categories.find(cat => cat.id.toString() === categoryId);
+  // Se a categoria não for encontrada, retorna um ícone padrão
+  return isExpense ? CreditCard : DollarSign; 
+};
+
+// Função para obter o nome amigável do tipo de transação
+const getTransactionTypeDisplayName = (transactionTypeId: string, transactionTypes: TransactionTypeBackend[]) => {
+  const type = transactionTypes.find(tt => tt.id.toString() === transactionTypeId);
+  return type ? type.transactionType : "Desconhecido";
+};
+
 // Função para obter o nome do banco a partir do valor
 const getBankLabel = (bankValue: string) => {
   const bankOptions = [
@@ -142,6 +150,10 @@ export default function TransactionsPage() {
   const [accounts, setAccounts] = useState<BankAccount[]>([])
   const [filteredTransactions, setFilteredTransactions] = useState<Transaction[]>([])
 
+  // Novos estados para categorias e tipos de transação do backend
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [transactionTypesBackend, setTransactionTypesBackend] = useState<TransactionTypeBackend[]>([]);
+
   // Estados para filtros
   const [searchTerm, setSearchTerm] = useState("")
   const [filterType, setFilterType] = useState<string>("all")
@@ -159,10 +171,11 @@ export default function TransactionsPage() {
   const [newTransaction, setNewTransaction] = useState({
     description: "",
     amount: "",
-    type: "expense" as TransactionType,
-    category: "food" as TransactionCategory,
+    type: "expense" as TransactionType, // Manter o tipo para controle do formulário
+    category: "", // Agora vai armazenar o ID da categoria como string
     date: new Date().toISOString().slice(0, 10),
     accountId: "",
+    transactionTypeId: "", // Novo campo para o ID do tipo de transação
   })
 
   // Função para obter o nome da conta, incluindo o caso especial "Dinheiro em Espécie"
@@ -173,34 +186,133 @@ export default function TransactionsPage() {
     return account ? `${account.name} - ${getBankLabel(account.bank)}` : "Conta desconhecida"
   }
 
-  /**
-   * Efeito para carregar dados do localStorage
-   */
+  // Funções de busca de dados do backend
+  const fetchAccounts = useCallback(async () => {
+    try {
+      const response = await AuthService.authenticatedRequest('/account', {
+        method: 'GET'
+      });
+
+      if (!response.ok) {
+        throw new Error('Erro ao buscar contas bancárias');
+      }
+
+      const data = await response.json();
+      setAccounts(data);
+    } catch (error) {
+      console.error('Erro ao buscar contas:', error);
+      toast({
+        title: "Erro",
+        description: "Não foi possível carregar suas contas bancárias.",
+        variant: "destructive",
+      });
+    }
+  }, []);
+
+  const fetchTransactions = useCallback(async () => {
+    try {
+      const response = await AuthService.authenticatedRequest('/transactions', {
+        method: 'GET'
+      });
+
+      if (!response.ok) {
+        throw new Error('Erro ao buscar transações');
+      }
+
+      const data: any[] = await response.json();
+      const mappedTransactions: Transaction[] = data.map(t => ({
+        id: t.id.toString(),
+        description: t.description,
+        amount: t.amount,
+        date: t.date,
+        accountId: t.account ? t.account.id.toString() : "cash",
+        category: t.category ? t.category.id.toString() : "",
+        transactionTypeId: t.transactionType ? t.transactionType.id.toString() : "",
+        type: t.transactionType && t.transactionType.transactionType ? t.transactionType.transactionType.toLowerCase() as TransactionType : "expense",
+      }));
+      setTransactions(mappedTransactions);
+    } catch (error) {
+      console.error('Erro ao buscar transações:', error);
+      toast({
+        title: "Erro",
+        description: "Não foi possível carregar suas transações.",
+        variant: "destructive",
+      });
+    }
+  }, []);
+
+  const fetchCategories = useCallback(async () => {
+    try {
+      const response = await AuthService.authenticatedRequest('/categories', {
+        method: 'GET'
+      });
+      if (!response.ok) {
+        throw new Error('Erro ao buscar categorias');
+      }
+      const data = await response.json();
+      setCategories(data);
+    } catch (error) {
+      console.error('Erro ao buscar categorias:', error);
+      toast({
+        title: "Erro",
+        description: "Não foi possível carregar as categorias.",
+        variant: "destructive",
+      });
+    }
+  }, []);
+
+  const fetchTransactionTypes = useCallback(async () => {
+    try {
+      const response = await AuthService.authenticatedRequest('/transaction-types', {
+        method: 'GET'
+      });
+      if (!response.ok) {
+        throw new Error('Erro ao buscar tipos de transação');
+      }
+      const data = await response.json();
+      setTransactionTypesBackend(data);
+    } catch (error) {
+      console.error('Erro ao buscar tipos de transação:', error);
+      toast({
+        title: "Erro",
+        description: "Não foi possível carregar os tipos de transação.",
+        variant: "destructive",
+      });
+    }
+  }, []);
+
+  // Efeito para carregar dados iniciais
   useEffect(() => {
-    // Verificar se o usuário está logado
     const isLoggedIn = localStorage.getItem("isLoggedIn") === "true"
 
-    // Se não estiver logado, redirecionar para a página de login
     if (!isLoggedIn) {
       router.push("/login")
+      return;
     }
 
-    // Carregar transações do localStorage
-    const storedTransactions = localStorage.getItem("transactions")
-    if (storedTransactions) {
-      const parsedTransactions = JSON.parse(storedTransactions)
-      setTransactions(parsedTransactions)
-    } else {
-      // Inicializar com array vazio em vez de dados de exemplo
-      localStorage.setItem("transactions", JSON.stringify([]))
-    }
+    // Carregar dados apenas uma vez na montagem do componente
+    const loadInitialData = async () => {
+      await Promise.all([
+        fetchAccounts(),
+        fetchTransactions(),
+        fetchCategories(),
+        fetchTransactionTypes()
+      ]);
+    };
 
-    // Carregar contas bancárias do localStorage
-    const storedAccounts = localStorage.getItem("bankAccounts")
-    if (storedAccounts) {
-      setAccounts(JSON.parse(storedAccounts))
+    loadInitialData();
+  }, []); // Removidas as dependências desnecessárias
+
+  // Efeito para definir valores padrão para categoria e tipo de transação quando as listas são carregadas
+  useEffect(() => {
+    if (categories.length > 0 && newTransaction.category === "") {
+      setNewTransaction(prev => ({ ...prev, category: categories[0].id.toString() }));
     }
-  }, [router])
+    if (transactionTypesBackend.length > 0 && newTransaction.transactionTypeId === "") {
+      // Não definir um tipo padrão, deixar o usuário escolher
+      setNewTransaction(prev => ({ ...prev, transactionTypeId: "" }));
+    }
+  }, [categories, transactionTypesBackend, newTransaction.category, newTransaction.transactionTypeId]);
 
   /**
    * Efeito para aplicar filtros às transações
@@ -221,7 +333,7 @@ export default function TransactionsPage() {
 
     // Filtrar por categoria
     if (filterCategory !== "all") {
-      result = result.filter((t) => t.category === filterCategory)
+      result = result.filter((t) => t.category === filterCategory) // Comparar IDs de string
     }
 
     // Filtrar por mês
@@ -244,228 +356,241 @@ export default function TransactionsPage() {
    * Funções para adicionar, editar e excluir transações
    */
   // Adicionar nova transação
-  const handleAddTransaction = () => {
-    if (!newTransaction.description || !newTransaction.amount || !newTransaction.accountId) return
+  const handleAddTransaction = async () => {
+    console.log('Clicou em adicionar');
+    // Validação dos campos obrigatórios
+    if (!newTransaction.description || !newTransaction.amount || !newTransaction.accountId || !newTransaction.category || !newTransaction.transactionTypeId || !newTransaction.date) {
+      console.log('Faltam campos obrigatórios:', newTransaction);
+      toast({
+        title: "Campos obrigatórios",
+        description: "Preencha todos os campos para adicionar uma transação.",
+        variant: "destructive",
+      });
+      return;
+    }
 
-    const transaction: Transaction = {
-      id: Date.now().toString(),
+    // Obter usuário logado
+    const user = AuthService.getCurrentUser();
+    if (!user) {
+      console.log('Usuário não autenticado');
+      toast({
+        title: "Erro",
+        description: "Usuário não autenticado.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Montar o payload conforme padrão informado
+    const transactionPayload = {
       description: newTransaction.description,
-      amount: Number.parseFloat(newTransaction.amount),
-      type: newTransaction.type,
-      category: newTransaction.category,
-      date: newTransaction.date,
-      accountId: newTransaction.accountId,
+      amount: Number(newTransaction.amount),
+      date: new Date(newTransaction.date).toISOString(),
+      categoryId: Number(newTransaction.category), // Enviar ID como número
+      transactionTypeId: Number(newTransaction.transactionTypeId), // Enviar ID como número
+      accountId: newTransaction.accountId === "cash" ? null : Number(newTransaction.accountId), // Handle "cash" account
+      userId: Number(user.id),
+    };
+    console.log('Payload a ser enviado:', transactionPayload);
+
+    try {
+      // Enviar requisição para o backend
+      const response = await AuthService.authenticatedRequest('/transactions', {
+        method: 'POST',
+        body: JSON.stringify(transactionPayload),
+      });
+      console.log('Resposta recebida:', response);
+
+      if (response.status === 403) {
+        toast({
+          title: "Sessão expirada",
+          description: "Faça login novamente para adicionar uma transação.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      if (!response.ok) {
+        let errorMessage = 'Erro ao adicionar transação';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.message || errorMessage;
+        } catch {}
+        console.log('Erro na resposta:', errorMessage);
+        toast({
+          title: "Erro ao adicionar transação",
+          description: errorMessage,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Re-fetch all transactions and accounts to ensure consistency
+      await fetchTransactions();
+      await fetchAccounts();
+
+      setIsAddDialogOpen(false);
+      setNewTransaction({
+        description: "",
+        amount: "",
+        type: "expense",
+        category: "",
+        date: new Date().toISOString().slice(0, 10),
+        accountId: "",
+        transactionTypeId: "",
+      });
+      toast({
+        title: "Sucesso",
+        description: "Transação adicionada com sucesso!",
+        variant: "default",
+      });
+    } catch (error: any) {
+      console.log('Erro no catch:', error);
+      toast({
+        title: "Erro ao adicionar transação",
+        description: error.message || "Não foi possível adicionar a transação.",
+        variant: "destructive",
+      });
     }
-
-    const updatedTransactions = [transaction, ...transactions]
-    setTransactions(updatedTransactions)
-
-    // Atualizar o saldo da conta apenas se não for "Dinheiro em Espécie"
-    if (newTransaction.accountId !== "cash") {
-      const updatedAccounts = accounts.map((account) => {
-        if (account.id === newTransaction.accountId) {
-          const newBalance =
-            transaction.type === "income"
-              ? account.balance + Number(newTransaction.amount)
-              : account.balance - Number(newTransaction.amount)
-
-          return {
-            ...account,
-            balance: newBalance,
-          }
-        }
-        return account
-      })
-
-      setAccounts(updatedAccounts)
-      localStorage.setItem("bankAccounts", JSON.stringify(updatedAccounts))
-    }
-
-    // Salvar no localStorage
-    localStorage.setItem("transactions", JSON.stringify(updatedTransactions))
-
-    setIsAddDialogOpen(false)
-
-    // Resetar o formulário
-    setNewTransaction({
-      description: "",
-      amount: "",
-      type: "expense" as TransactionType,
-      category: "food" as TransactionCategory,
-      date: new Date().toISOString().slice(0, 10),
-      accountId: "",
-    })
   }
 
   // Editar transação existente
-  const handleEditTransaction = () => {
-    if (!currentTransaction || !newTransaction.description || !newTransaction.amount) return
+  const handleEditTransaction = async () => {
+    if (!currentTransaction || !newTransaction.description || !newTransaction.amount) {
+      toast({
+        title: "Campos obrigatórios",
+        description: "Preencha todos os campos para editar uma transação.",
+        variant: "destructive",
+      });
+      return;
+    }
 
-    // Verificar se o tipo ou a conta mudou para ajustar os saldos
-    const oldTransaction = transactions.find((t) => t.id === currentTransaction.id)
-    const typeChanged = oldTransaction?.type !== newTransaction.type
-    const accountChanged = oldTransaction?.accountId !== newTransaction.accountId
-    const amountChanged = oldTransaction?.amount !== Number(newTransaction.amount)
+    const user = AuthService.getCurrentUser();
+    if (!user) {
+      toast({
+        title: "Erro",
+        description: "Usuário não autenticado.",
+        variant: "destructive",
+      });
+      return;
+    }
 
-    // Criar a transação atualizada
-    const updatedTransaction: Transaction = {
-      ...currentTransaction,
+    // Prepare payload for backend PUT request
+    const transactionPayload = {
       description: newTransaction.description,
       amount: Number(newTransaction.amount),
-      type: newTransaction.type,
-      category: newTransaction.category,
-      date: newTransaction.date,
-      accountId: newTransaction.accountId,
-    }
+      date: new Date(newTransaction.date).toISOString(),
+      categoryId: Number(newTransaction.category), // Enviar ID como número
+      transactionTypeId: Number(newTransaction.transactionTypeId), // Enviar ID como número
+      accountId: newTransaction.accountId === "cash" ? null : Number(newTransaction.accountId),
+      userId: Number(user.id),
+    };
 
-    // Atualizar a lista de transações
-    const updatedTransactions = transactions.map((t) => (t.id === currentTransaction.id ? updatedTransaction : t))
-    setTransactions(updatedTransactions)
+    try {
+      const response = await AuthService.authenticatedRequest(`/transactions/${currentTransaction.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(transactionPayload),
+      });
 
-    // Atualizar os saldos das contas se necessário
-    if (typeChanged || accountChanged || amountChanged) {
-      let updatedAccounts = [...accounts]
-
-      // Se a conta mudou, precisamos atualizar ambas as contas
-      if (accountChanged && oldTransaction) {
-        // Reverter a transação antiga na conta antiga (apenas se não for "Dinheiro em Espécie")
-        if (oldTransaction.accountId !== "cash") {
-          updatedAccounts = updatedAccounts.map((account) => {
-            if (account.id === oldTransaction.accountId) {
-              const adjustedBalance =
-                oldTransaction.type === "income"
-                  ? account.balance - oldTransaction.amount
-                  : account.balance + oldTransaction.amount
-
-              return {
-                ...account,
-                balance: adjustedBalance,
-              }
-            }
-            return account
-          })
-        }
-
-        // Aplicar a nova transação na nova conta (apenas se não for "Dinheiro em Espécie")
-        if (newTransaction.accountId !== "cash") {
-          updatedAccounts = updatedAccounts.map((account) => {
-            if (account.id === newTransaction.accountId) {
-              const adjustedBalance =
-                newTransaction.type === "income"
-                  ? account.balance + Number(newTransaction.amount)
-                  : account.balance - Number(newTransaction.amount)
-
-              return {
-                ...account,
-                balance: adjustedBalance,
-              }
-            }
-            return account
-          })
-        }
-      } else if (oldTransaction && oldTransaction.accountId !== "cash") {
-        // Se apenas o tipo ou valor mudou, mas a conta é a mesma e não é "Dinheiro em Espécie"
-        updatedAccounts = updatedAccounts.map((account) => {
-          if (account.id === oldTransaction.accountId) {
-            // Reverter a transação antiga
-            let adjustedBalance =
-              oldTransaction.type === "income"
-                ? account.balance - oldTransaction.amount
-                : account.balance + oldTransaction.amount
-
-            // Aplicar a nova transação
-            adjustedBalance =
-              newTransaction.type === "income"
-                ? adjustedBalance + Number(newTransaction.amount)
-                : adjustedBalance - Number(newTransaction.amount)
-
-            return {
-              ...account,
-              balance: adjustedBalance,
-            }
-          }
-          return account
-        })
+      if (!response.ok) {
+        let errorMessage = 'Erro ao editar transação';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.message || errorMessage;
+        } catch {}
+        throw new Error(errorMessage);
       }
 
-      setAccounts(updatedAccounts)
-      localStorage.setItem("bankAccounts", JSON.stringify(updatedAccounts))
+      // After successful update, re-fetch all transactions and accounts to ensure consistency
+      await fetchTransactions();
+      await fetchAccounts();
+
+      setIsEditDialogOpen(false);
+      setCurrentTransaction(null);
+      toast({
+        title: "Sucesso",
+        description: "Transação atualizada com sucesso!",
+        variant: "default",
+      });
+    } catch (error: any) {
+      console.error('Erro ao editar transação:', error);
+      toast({
+        title: "Erro",
+        description: error.message || "Não foi possível atualizar a transação.",
+        variant: "destructive",
+      });
     }
-
-    // Salvar no localStorage
-    localStorage.setItem("transactions", JSON.stringify(updatedTransactions))
-
-    setIsEditDialogOpen(false)
-    setCurrentTransaction(null)
   }
 
   // Excluir transação
-  const handleDeleteTransaction = () => {
+  const handleDeleteTransaction = async () => {
     if (!currentTransaction) return
 
-    // Atualizar o saldo da conta apenas se não for "Dinheiro em Espécie"
-    if (currentTransaction.accountId !== "cash") {
-      const updatedAccounts = accounts.map((account) => {
-        if (account.id === currentTransaction.accountId) {
-          const adjustedBalance =
-            currentTransaction.type === "income"
-              ? account.balance - currentTransaction.amount
-              : account.balance + currentTransaction.amount
-
-          return {
-            ...account,
-            balance: adjustedBalance,
-          }
-        }
-        return account
+    try {
+      // Validação e requisição DELETE
+      const response = await AuthService.authenticatedRequest(`/transactions/${currentTransaction.id}`, {
+        method: 'DELETE',
       })
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.message || 'Erro ao excluir transação')
+      }
 
-      setAccounts(updatedAccounts)
-      localStorage.setItem("bankAccounts", JSON.stringify(updatedAccounts))
+      // Re-fetch all transactions and accounts to ensure consistency
+      await fetchTransactions();
+      await fetchAccounts();
+
+      setIsDeleteDialogOpen(false)
+      setCurrentTransaction(null)
+      toast({
+        title: "Sucesso",
+        description: "Transação excluída com sucesso!",
+        variant: "default",
+      })
+    } catch (error: any) {
+      toast({
+        title: "Erro ao excluir transação",
+        description: error.message || "Não foi possível excluir a transação.",
+        variant: "destructive",
+      })
     }
-
-    // Remover a transação da lista
-    const updatedTransactions = transactions.filter((t) => t.id !== currentTransaction.id)
-    setTransactions(updatedTransactions)
-
-    // Salvar no localStorage
-    localStorage.setItem("transactions", JSON.stringify(updatedTransactions))
-
-    setIsDeleteDialogOpen(false)
-    setCurrentTransaction(null)
   }
 
-  // Excluir todas as transações
-  const handleDeleteAllTransactions = () => {
-    // Restaurar os saldos originais das contas (assumindo que o saldo atual inclui todas as transações)
-    const restoredAccounts = accounts.map((account) => {
-      // Calcular o saldo ajustado removendo o efeito de todas as transações
-      const accountTransactions = transactions.filter((t) => t.accountId === account.id)
-      let adjustedBalance = account.balance
+  // Excluir todas as transações (this function needs to be updated to interact with backend API)
+  const handleDeleteAllTransactions = async () => {
+    try {
+      // Assuming there's a backend endpoint to delete all transactions for a user
+      const response = await AuthService.authenticatedRequest('/transactions/clear-all', {
+        method: 'DELETE',
+      });
 
-      accountTransactions.forEach((transaction) => {
-        if (transaction.type === "income") {
-          adjustedBalance -= transaction.amount
-        } else {
-          adjustedBalance += transaction.amount
-        }
-      })
-
-      return {
-        ...account,
-        balance: adjustedBalance,
+      if (!response.ok) {
+        let errorMessage = 'Erro ao excluir todas as transações';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.message || errorMessage;
+        } catch {}
+        throw new Error(errorMessage);
       }
-    })
 
-    // Limpar todas as transações
-    setTransactions([])
-    setAccounts(restoredAccounts)
+      // Re-fetch all transactions and accounts to ensure consistency
+      await fetchTransactions();
+      await fetchAccounts();
 
-    // Salvar no localStorage
-    localStorage.setItem("transactions", JSON.stringify([]))
-    localStorage.setItem("bankAccounts", JSON.stringify(restoredAccounts))
-
-    setIsDeleteAllDialogOpen(false)
+      setIsDeleteAllDialogOpen(false);
+      toast({
+        title: "Sucesso",
+        description: "Todas as transações foram excluídas!",
+        variant: "default",
+      });
+    } catch (error: any) {
+      console.error('Erro ao excluir todas as transações:', error);
+      toast({
+        title: "Erro",
+        description: error.message || "Não foi possível excluir todas as transações.",
+        variant: "destructive",
+      });
+    }
   }
 
   /**
@@ -478,9 +603,10 @@ export default function TransactionsPage() {
       description: transaction.description,
       amount: transaction.amount.toString(),
       type: transaction.type,
-      category: transaction.category,
+      category: transaction.category, // Já é string
       date: transaction.date,
       accountId: transaction.accountId,
+      transactionTypeId: transaction.transactionTypeId || "", // Já é string
     })
     setIsEditDialogOpen(true)
   }
@@ -508,13 +634,260 @@ export default function TransactionsPage() {
     return new Intl.DateTimeFormat("pt-BR").format(date)
   }
 
+  // Função para validação GET com JSON customizado
+  // Esta função não parece ser usada na UI, mantida para referência/debug se necessário
+  const validateGetTransactions = async () => {
+    try {
+      const payload = [
+        {
+          id: 0,
+          description: "string",
+          amount: 0,
+          date: new Date().toISOString(),
+          category: {
+            id: 0,
+            categoryName: "string"
+          },
+          transactionType: {
+            id: 0,
+            transactionType: "string"
+          },
+          user: {
+            id: 0,
+            name: "string",
+            email: "string"
+          }
+        }
+      ]
+      const response = await AuthService.authenticatedRequest('/transactions', {
+        method: 'GET',
+        body: JSON.stringify(payload), // Este body em GET é incomum e pode causar erros no backend
+      })
+      if (!response.ok) {
+        throw new Error('Erro ao validar GET /transactions com JSON')
+      }
+      toast({
+        title: 'Validação GET /transactions',
+        description: 'Validação realizada com sucesso!',
+        variant: 'default',
+      })
+    } catch (error: any) {
+      toast({
+        title: 'Erro na validação GET /transactions',
+        description: error.message || 'Não foi possível validar o backend.',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  // Função para validação GET de tipos de transação
+  const validateGetTransactionTypes = async () => {
+    try {
+      const payload = [
+        {
+          id: 0,
+          transactionType: "string"
+        }
+      ]
+      const response = await AuthService.authenticatedRequest('/transaction-types', {
+        method: 'GET',
+        body: JSON.stringify(payload),
+      })
+      if (!response.ok) {
+        throw new Error('Erro ao validar GET /transaction-types com JSON')
+      }
+      toast({
+        title: 'Validação GET /transaction-types',
+        description: 'Validação realizada com sucesso!',
+        variant: 'default',
+      })
+    } catch (error: any) {
+      toast({
+        title: 'Erro na validação GET /transaction-types',
+        description: error.message || 'Não foi possível validar o backend.',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  // Função para validação POST de tipo de transação
+  const validatePostTransactionType = async () => {
+    try {
+      const payload = {
+        id: 0,
+        transactionType: "string"
+      }
+      const response = await AuthService.authenticatedRequest('/transaction-type', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+      if (!response.ok) {
+        throw new Error('Erro ao validar POST /transaction-type com JSON')
+      }
+      toast({
+        title: 'Validação POST /transaction-type',
+        description: 'Validação realizada com sucesso!',
+        variant: 'default',
+      })
+    } catch (error: any) {
+      toast({
+        title: 'Erro na validação POST /transaction-type',
+        description: error.message || 'Não foi possível validar o backend.',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  // Função para validação e requisição POST em /transactions
+  // Esta função não parece ser usada na UI, mantida para referência/debug se necessário
+  const validateAndPostTransaction = async () => {
+    try {
+      // Validação (pode ser um POST de teste ou fetch simples)
+      const validationPayload = {
+        description: "string",
+        amount: 0,
+        date: new Date().toISOString(),
+        categoryId: 0,
+        transactionTypeId: 0,
+        userId: 0
+      }
+      const validationResponse = await AuthService.authenticatedRequest('/transactions', {
+        method: 'POST',
+        body: JSON.stringify(validationPayload),
+      })
+      if (!validationResponse.ok) {
+        throw new Error('Erro na validação POST /transactions')
+      }
+      // Requisição POST com o JSON completo (Este payload está incorreto para POST de transação real)
+      const postPayload = {
+        id: 0,
+        description: "string",
+        amount: 0,
+        date: new Date().toISOString(),
+        category: {
+          id: 0,
+          categoryName: "string"
+        },
+        transactionType: {
+          id: 0,
+          transactionType: "string"
+        },
+        user: {
+          id: 0,
+          name: "string",
+          dateOfBirth: "2025-06-04",
+          cpf: "string",
+          email: "string",
+          password: "string"
+        }
+      }
+      const postResponse = await AuthService.authenticatedRequest('/transactions', {
+        method: 'POST',
+        body: JSON.stringify(postPayload),
+      })
+      if (!postResponse.ok) {
+        throw new Error('Erro ao fazer POST /transactions')
+      }
+      toast({
+        title: 'Validação e POST /transactions',
+        description: 'Validação e requisição realizadas com sucesso!',
+        variant: 'default',
+      })
+    } catch (error: any) {
+      toast({
+        title: 'Erro na validação ou POST /transactions',
+        description: error.message || 'Não foi possível validar ou enviar para o backend.',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  // Função para abrir o diálogo de adicionar transação (apenas verifica autenticação)
+  const handleOpenAddDialog = (open: boolean) => {
+    if (open) {
+      if (!AuthService.isAuthenticated()) {
+        toast({
+          title: 'Sessão expirada',
+          description: 'Faça login novamente para adicionar uma transação.',
+          variant: 'destructive',
+        })
+        return
+      }
+      setIsAddDialogOpen(true)
+    } else {
+      setIsAddDialogOpen(false)
+    }
+  }
+
+  // Função para editar tipo de transação
+  const handleEditTransactionType = async (id: number, newType: string) => {
+    try {
+      await TransactionTypeService.updateTransactionType(id, {
+        id,
+        transactionType: newType
+      });
+
+      // Atualizar a lista de tipos de transação
+      await fetchTransactionTypes();
+      
+      toast({
+        title: "Sucesso",
+        description: "Tipo de transação atualizado com sucesso!",
+        variant: "default",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Erro",
+        description: error.message || "Não foi possível atualizar o tipo de transação.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Função para excluir tipo de transação
+  const handleDeleteTransactionType = async (id: number) => {
+    try {
+      await TransactionTypeService.deleteTransactionType(id);
+
+      // Atualizar a lista de tipos de transação
+      await fetchTransactionTypes();
+      
+      toast({
+        title: "Sucesso",
+        description: "Tipo de transação excluído com sucesso!",
+        variant: "default",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Erro",
+        description: error.message || "Não foi possível excluir o tipo de transação.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Função para buscar detalhes de um tipo de transação
+  const handleGetTransactionType = async (id: number) => {
+    try {
+      const transactionType = await TransactionTypeService.getTransactionType(id);
+      return transactionType;
+    } catch (error: any) {
+      toast({
+        title: "Erro",
+        description: error.message || "Não foi possível buscar o tipo de transação.",
+        variant: "destructive",
+      });
+      return null;
+    }
+  };
+
   return (
     <div className="flex min-h-screen flex-col cement-gradient">
       {/* Cabeçalho da página */}
       <header className="border-b border-zinc-700">
         <div className="container flex h-16 items-center justify-between px-4 md:px-6">
           <Link href="/" className="flex items-center gap-2">
-            <Image src="/logo-cashflow.jpg" alt="CashFlow Logo" width={40} height={40} className="rounded-md" />
+            <Image src="/img/dolar.png" alt="CashFlow Logo" width={40} height={40} className="rounded-md" />
             <span className="text-xl font-bold text-zinc-100">CashFlow</span>
           </Link>
           <nav className="flex gap-4 sm:gap-6 items-center">
@@ -582,7 +955,7 @@ export default function TransactionsPage() {
               <h1 className="text-2xl font-bold text-zinc-100">Transações</h1>
               <div className="flex flex-col sm:flex-row gap-2">
                 {/* Botão para adicionar nova transação */}
-                <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+                <Dialog open={isAddDialogOpen} onOpenChange={handleOpenAddDialog}>
                   <DialogTrigger asChild>
                     <Button className="cement-button text-white border-0 shadow-md">
                       <Plus className="mr-2 h-4 w-4" />
@@ -605,21 +978,36 @@ export default function TransactionsPage() {
                             Tipo
                           </Label>
                           <Select
-                            value={newTransaction.type}
-                            onValueChange={(value) =>
-                              setNewTransaction({ ...newTransaction, type: value as TransactionType })
-                            }
+                            value={newTransaction.transactionTypeId}
+                            onValueChange={(value) => {
+                              const selectedType = transactionTypesBackend.find(tt => tt.id.toString() === value);
+                              setNewTransaction({
+                                ...newTransaction,
+                                transactionTypeId: value,
+                                type: selectedType ? (selectedType.transactionType.toLowerCase() as TransactionType) : 'expense',
+                              });
+                            }}
                           >
                             <SelectTrigger className="bg-zinc-800 border-zinc-700 text-zinc-200">
-                              <SelectValue placeholder="Selecione o tipo" />
+                              <SelectValue placeholder="Selecione o tipo">
+                                {newTransaction.transactionTypeId ? (
+                                  (() => {
+                                    const selectedType = transactionTypesBackend.find(
+                                      (type) => type.id.toString() === newTransaction.transactionTypeId
+                                    );
+                                    return selectedType ? selectedType.transactionType : "Selecione o tipo";
+                                  })()
+                                ) : (
+                                  "Selecione o tipo"
+                                )}
+                              </SelectValue>
                             </SelectTrigger>
                             <SelectContent className="bg-zinc-800 border-zinc-700">
-                              <SelectItem value="income" className="text-zinc-200">
-                                Receita
-                              </SelectItem>
-                              <SelectItem value="expense" className="text-zinc-200">
-                                Despesa
-                              </SelectItem>
+                              {transactionTypesBackend.map((type) => (
+                                <SelectItem key={type.id} value={type.id.toString()} className="text-zinc-200">
+                                  {type.transactionType}
+                                </SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
                         </div>
@@ -707,55 +1095,18 @@ export default function TransactionsPage() {
                         <Select
                           value={newTransaction.category}
                           onValueChange={(value) =>
-                            setNewTransaction({ ...newTransaction, category: value as TransactionCategory })
+                            setNewTransaction({ ...newTransaction, category: value })
                           }
                         >
                           <SelectTrigger className="bg-zinc-800 border-zinc-700 text-zinc-200">
                             <SelectValue placeholder="Selecione a categoria" />
                           </SelectTrigger>
                           <SelectContent className="bg-zinc-800 border-zinc-700">
-                            {newTransaction.type === "income" ? (
-                              // Categorias de receita
-                              <>
-                                <SelectItem value="salary" className="text-zinc-200">
-                                  Salário
-                                </SelectItem>
-                                <SelectItem value="investment" className="text-zinc-200">
-                                  Investimento
-                                </SelectItem>
-                                <SelectItem value="other_income" className="text-zinc-200">
-                                  Outras Receitas
-                                </SelectItem>
-                              </>
-                            ) : (
-                              // Categorias de despesa
-                              <>
-                                <SelectItem value="food" className="text-zinc-200">
-                                  Alimentação
-                                </SelectItem>
-                                <SelectItem value="transport" className="text-zinc-200">
-                                  Transporte
-                                </SelectItem>
-                                <SelectItem value="housing" className="text-zinc-200">
-                                  Moradia
-                                </SelectItem>
-                                <SelectItem value="utilities" className="text-zinc-200">
-                                  Contas
-                                </SelectItem>
-                                <SelectItem value="entertainment" className="text-zinc-200">
-                                  Entretenimento
-                                </SelectItem>
-                                <SelectItem value="health" className="text-zinc-200">
-                                  Saúde
-                                </SelectItem>
-                                <SelectItem value="education" className="text-zinc-200">
-                                  Educação
-                                </SelectItem>
-                                <SelectItem value="other_expense" className="text-zinc-200">
-                                  Outras Despesas
-                                </SelectItem>
-                              </>
-                            )}
+                            {categories.map((cat) => (
+                              <SelectItem key={cat.id} value={cat.id.toString()} className="text-zinc-200">
+                                {cat.categoryName}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
@@ -871,41 +1222,11 @@ export default function TransactionsPage() {
                         <SelectItem value="all" className="text-zinc-200">
                           Todas as categorias
                         </SelectItem>
-                        {/* Categorias de receita */}
-                        <SelectItem value="salary" className="text-zinc-200">
-                          Salário
-                        </SelectItem>
-                        <SelectItem value="investment" className="text-zinc-200">
-                          Investimento
-                        </SelectItem>
-                        <SelectItem value="other_income" className="text-zinc-200">
-                          Outras Receitas
-                        </SelectItem>
-                        {/* Categorias de despesa */}
-                        <SelectItem value="food" className="text-zinc-200">
-                          Alimentação
-                        </SelectItem>
-                        <SelectItem value="transport" className="text-zinc-200">
-                          Transporte
-                        </SelectItem>
-                        <SelectItem value="housing" className="text-zinc-200">
-                          Moradia
-                        </SelectItem>
-                        <SelectItem value="utilities" className="text-zinc-200">
-                          Contas
-                        </SelectItem>
-                        <SelectItem value="entertainment" className="text-zinc-200">
-                          Entretenimento
-                        </SelectItem>
-                        <SelectItem value="health" className="text-zinc-200">
-                          Saúde
-                        </SelectItem>
-                        <SelectItem value="education" className="text-zinc-200">
-                          Educação
-                        </SelectItem>
-                        <SelectItem value="other_expense" className="text-zinc-200">
-                          Outras Despesas
-                        </SelectItem>
+                        {categories.map((cat) => (
+                          <SelectItem key={cat.id} value={cat.id.toString()} className="text-zinc-200">
+                            {cat.categoryName}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -970,7 +1291,7 @@ export default function TransactionsPage() {
                           </thead>
                           <tbody>
                             {filteredTransactions.map((transaction) => {
-                              const CategoryIcon = categoryInfo[transaction.category].icon
+                              const CategoryIcon = getCategoryIcon(transaction.category, categories, transaction.type === "expense")
                               return (
                                 <tr
                                   key={transaction.id}
@@ -983,7 +1304,7 @@ export default function TransactionsPage() {
                                       <div className="rounded-full bg-zinc-800 p-1">
                                         <CategoryIcon className="h-3 w-3 text-zinc-300" />
                                       </div>
-                                      <span className="text-zinc-300">{categoryInfo[transaction.category].name}</span>
+                                      <span className="text-zinc-300">{getCategoryDisplayName(transaction.category, categories)}</span>
                                     </div>
                                   </td>
                                   <td
@@ -1044,19 +1365,36 @@ export default function TransactionsPage() {
                   Tipo
                 </Label>
                 <Select
-                  value={newTransaction.type}
-                  onValueChange={(value) => setNewTransaction({ ...newTransaction, type: value as TransactionType })}
+                  value={newTransaction.transactionTypeId}
+                  onValueChange={(value) => {
+                    const selectedType = transactionTypesBackend.find(tt => tt.id.toString() === value);
+                    setNewTransaction({
+                      ...newTransaction,
+                      transactionTypeId: value,
+                      type: selectedType ? (selectedType.transactionType.toLowerCase() as TransactionType) : 'expense',
+                    });
+                  }}
                 >
                   <SelectTrigger className="bg-zinc-800 border-zinc-700 text-zinc-200">
-                    <SelectValue placeholder="Selecione o tipo" />
+                    <SelectValue placeholder="Selecione o tipo">
+                      {newTransaction.transactionTypeId ? (
+                        (() => {
+                          const selectedType = transactionTypesBackend.find(
+                            (type) => type.id.toString() === newTransaction.transactionTypeId
+                          );
+                          return selectedType ? selectedType.transactionType : "Selecione o tipo";
+                        })()
+                      ) : (
+                        "Selecione o tipo"
+                      )}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent className="bg-zinc-800 border-zinc-700">
-                    <SelectItem value="income" className="text-zinc-200">
-                      Receita
-                    </SelectItem>
-                    <SelectItem value="expense" className="text-zinc-200">
-                      Despesa
-                    </SelectItem>
+                    {transactionTypesBackend.map((type) => (
+                      <SelectItem key={type.id} value={type.id.toString()} className="text-zinc-200">
+                        {type.transactionType}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -1135,53 +1473,18 @@ export default function TransactionsPage() {
               <Select
                 value={newTransaction.category}
                 onValueChange={(value) =>
-                  setNewTransaction({ ...newTransaction, category: value as TransactionCategory })
+                  setNewTransaction({ ...newTransaction, category: value })
                 }
               >
                 <SelectTrigger className="bg-zinc-800 border-zinc-700 text-zinc-200">
                   <SelectValue placeholder="Selecione a categoria" />
                 </SelectTrigger>
                 <SelectContent className="bg-zinc-800 border-zinc-700">
-                  {newTransaction.type === "income" ? (
-                    <>
-                      <SelectItem value="salary" className="text-zinc-200">
-                        Salário
-                      </SelectItem>
-                      <SelectItem value="investment" className="text-zinc-200">
-                        Investimento
-                      </SelectItem>
-                      <SelectItem value="other_income" className="text-zinc-200">
-                        Outras Receitas
-                      </SelectItem>
-                    </>
-                  ) : (
-                    <>
-                      <SelectItem value="food" className="text-zinc-200">
-                        Alimentação
-                      </SelectItem>
-                      <SelectItem value="transport" className="text-zinc-200">
-                        Transporte
-                      </SelectItem>
-                      <SelectItem value="housing" className="text-zinc-200">
-                        Moradia
-                      </SelectItem>
-                      <SelectItem value="utilities" className="text-zinc-200">
-                        Contas
-                      </SelectItem>
-                      <SelectItem value="entertainment" className="text-zinc-200">
-                        Entretenimento
-                      </SelectItem>
-                      <SelectItem value="health" className="text-zinc-200">
-                        Saúde
-                      </SelectItem>
-                      <SelectItem value="education" className="text-zinc-200">
-                        Educação
-                      </SelectItem>
-                      <SelectItem value="other_expense" className="text-zinc-200">
-                        Outras Despesas
-                      </SelectItem>
-                    </>
-                  )}
+                  {categories.map((cat) => (
+                    <SelectItem key={cat.id} value={cat.id.toString()} className="text-zinc-200">
+                      {cat.categoryName}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

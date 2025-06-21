@@ -17,7 +17,9 @@ public class Movement {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private Long accountId;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "account_id", nullable = false)
+    private Account account;
 
     private String type; // "DEPOSIT" ou "WITHDRAW"
 
@@ -27,8 +29,8 @@ public class Movement {
 
     public Movement(){}
 
-    public Movement(Long accountId, String type, BigDecimal amount, LocalDateTime movementDate) {
-        this.accountId = accountId;
+    public Movement(Account account, String type, BigDecimal amount, LocalDateTime movementDate) {
+        this.account = account;
         this.type = type;
         this.amount = amount;
         this.movementDate = movementDate;

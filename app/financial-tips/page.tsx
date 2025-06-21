@@ -26,7 +26,7 @@ export default function FinancialTipsPage() {
       <header className="border-b border-zinc-700">
         <div className="container flex h-16 items-center justify-between px-4 md:px-6">
           <Link href="/" className="flex items-center gap-2">
-            <Image src="/logo-cashflow.jpg" alt="CashFlow Logo" width={40} height={40} className="rounded-md" />
+            <Image src="/img/dolar.png" alt="CashFlow Logo" width={40} height={40} className="rounded-md" />
             <span className="text-xl font-bold text-zinc-100">CashFlow</span>
           </Link>
           <nav className="flex gap-4 sm:gap-6">
@@ -65,13 +65,13 @@ export default function FinancialTipsPage() {
                       dinheiro.
                     </p>
                   </div>
-                  <div className="bg-zinc-700 flex items-center justify-center">
+                  <div className="bg-zinc-800/50 flex items-center justify-center h-full w-full">
                     <Image
-                      src="/placeholder.svg?height=300&width=300"
-                      width={300}
-                      height={300}
+                      src="/img/controle2.webp"
+                      width={400}
+                      height={400}
                       alt="Ilustração de organização financeira"
-                      className="opacity-80"
+                      className="w-full h-full object-cover"
                     />
                   </div>
                 </div>
@@ -170,7 +170,7 @@ export default function FinancialTipsPage() {
                   <div className="relative">
                     <div className="absolute inset-0 bg-zinc-700 blur-md transform translate-x-2 translate-y-2 rounded-lg"></div>
                     <Image
-                      src="/placeholder.svg?height=250&width=350"
+                      src="/img/controle3.avif"
                       width={350}
                       height={250}
                       alt="Dashboard do CashFlow"
@@ -200,7 +200,7 @@ export default function FinancialTipsPage() {
       <footer className="border-t border-zinc-800 py-8">
         <div className="container mx-auto flex flex-col gap-2 sm:flex-row items-center justify-center px-4 md:px-6">
           <div className="flex items-center gap-2">
-            <Image src="/logo-cashflow.jpg" alt="CashFlow Logo" width={24} height={24} className="rounded-md" />
+            <Image src="/img/dolar.png" alt="CashFlow Logo" width={24} height={24} className="rounded-md" />
             <p className="text-xs text-zinc-500">
               &copy; {new Date().getFullYear()} CashFlow. Todos os direitos reservados.
             </p>
